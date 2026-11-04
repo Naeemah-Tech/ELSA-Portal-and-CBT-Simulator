@@ -1,0 +1,729 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ELSA-CBT Portal & Simulator</title>
+    <link rel="stylesheet" href="style.css">
+    <!-- FontAwesome CDN for Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Firebase SDKs Compat -->
+    <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-firestore-compat.js"></script>
+    <!-- Chart.js CDN for Analytics Graph -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- html2pdf Library for PDF Profile Slip Export -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+</head>
+<body>
+
+    <!-- Top Header -->
+    <header class="header" id="mainHeader">
+        <div class="header-left-cluster">
+            <button id="hamburgerBtn" onclick="toggleSidebar()" class="hamburger-btn hidden" title="Toggle Menu"><i class="fa-solid fa-bars"></i></button>
+            <div class="header-brand">
+                <span class="brand-badge">ELSA</span>
+                <div>
+                    <h1>Excellent Learners Solution Academy</h1>
+                    <p>Secure CBT & Portal System</p>
+                </div>
+            </div>
+        </div>
+        <div class="header-right">
+            <span id="userStatusBadge" class="status-badge">Ready</span>
+            <button id="logoutBtn" onclick="handleLogout()" class="logout-btn hidden">Logout / Cancel</button>
+        </div>
+    </header>
+
+    <!-- Main App Layout -->
+    <div class="app-layout" id="mainAppLayout">
+        <!-- Sidebar Navigation -->
+        <div id="sidebarOverlay" class="sidebar-overlay hidden" onclick="toggleSidebar()"></div>
+        <aside id="appSidebar" class="sidebar hidden">
+            <div class="sidebar-header-row mobile-only">
+                <h3>Navigation Menu</h3>
+                <button onclick="toggleSidebar()" class="close-sidebar">&times;</button>
+            </div>
+            <div class="sidebar-section">
+                <button onclick="showView('viewHome'); handleMobileMenuNav();" class="nav-link active-simulator" id="navHome"><i class="fa-solid fa-house"></i> Home Dashboard</button>
+            </div>
+
+            <div class="sidebar-section">
+                <p class="sidebar-title">Test & Simulators</p>
+                <button onclick="launchExamMode('JAMB'); handleMobileMenuNav();" class="nav-link" id="navJAMB"><i class="fa-solid fa-graduation-cap"></i> JAMB CBT Simulator</button>
+                <button onclick="launchExamMode('WAEC'); handleMobileMenuNav();" class="nav-link" id="navWAEC"><i class="fa-solid fa-book-open"></i> WAEC CBT Simulator</button>
+                <button onclick="launchExamMode('NECO'); handleMobileMenuNav();" class="nav-link" id="navNECO"><i class="fa-solid fa-book"></i> NECO CBT Simulator</button>
+            </div>
+
+            <div class="sidebar-section">
+                <p class="sidebar-title">Records & History</p>
+                <button onclick="showExamHistoryView(); handleMobileMenuNav();" class="nav-link" id="navHistory"><i class="fa-solid fa-clock-rotate-left"></i> Exam Records & History</button>
+            </div>
+
+            <div class="sidebar-section">
+                <p class="sidebar-title">Study Hub</p>
+                <button onclick="openStudyModal(); handleMobileMenuNav();" class="nav-link"><i class="fa-solid fa-magnifying-glass"></i> Study Past Questions</button>
+            </div>
+
+            <div class="sidebar-section" id="roleSpecificMenu" style="display: none;">
+                <p class="sidebar-title">Administration</p>
+                <button onclick="showView('viewAdmin'); handleMobileMenuNav();" class="nav-link" id="navAdmin"><i class="fa-solid fa-crown"></i> Admin Control Panel</button>
+            </div>
+        </aside>
+
+        <main class="workspace">
+
+            <!-- Auth Section -->
+            <section id="authSection" class="auth-card hidden">
+                <div class="auth-tabs">
+                    <button id="tabLogin" onclick="switchAuthTab('login')" class="auth-tab-btn active">Login</button>
+                    <button id="tabSignup" onclick="switchAuthTab('signup')" class="auth-tab-btn">Sign Up</button>
+                    <div id="tabIndicator" class="tab-indicator login-active"></div>
+                </div>
+
+                <form id="loginForm" class="auth-form" onsubmit="handleLoginSubmit(event)">
+                    <div class="form-group">
+                        <label>Gmail Address</label>
+                        <input type="email" id="loginEmail" required placeholder="user@gmail.com" oninput="validateGmailInput(this)">
+                        <small id="loginEmailWarning" class="gmail-warning hidden">⚠️ Please enter a valid @gmail.com address.</small>
+                    </div>
+                    <div class="form-group">
+                        <label>Password</label>
+                        <input type="password" id="loginPassword" required placeholder="••••••••">
+                    </div>
+                    <button type="submit" class="primary-btn">Login to Portal</button>
+                </form>
+
+                <form id="signupForm" class="auth-form hidden" onsubmit="handleSignupSubmit(event)">
+                    <div class="form-group">
+                        <label>Username / Full Name</label>
+                        <input type="text" id="signupUsername" required placeholder="e.g. Naeemah">
+                    </div>
+                    <div class="form-group">
+                        <label>Gmail Address (Must be pre-registered)</label>
+                        <input type="email" id="signupEmail" required placeholder="user@gmail.com" oninput="validateGmailInput(this)">
+                        <small id="signupEmailWarning" class="gmail-warning hidden">⚠️ Please enter a valid @gmail.com address.</small>
+                    </div>
+                    <div class="form-group">
+                        <label>Password</label>
+                        <input type="password" id="signupPassword" required placeholder="••••••••">
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Role</label>
+                            <select id="signupRole" onchange="toggleSignupRoleFields()">
+                                <option value="student">Student</option>
+                                <option value="teacher">Teacher</option>
+                                <option value="admin">Admin</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>Gender</label>
+                            <select id="signupGender">
+                                <option value="Male">Male</option>
+                                <option value="Female">Female</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="form-group" id="signupTeacherTitleGroup" style="display: none;">
+                        <label>Teacher Title</label>
+                        <select id="signupTeacherTitle" class="form-select">
+                            <option value="Mr.">Mr.</option>
+                            <option value="Mrs.">Mrs.</option>
+                            <option value="Miss">Miss</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Passport Photograph (Optional)</label>
+                        <input type="file" id="signupPassportInput" accept="image/*" class="form-select">
+                    </div>
+                    <button type="submit" class="primary-btn">Create Account</button>
+                </form>
+            </section>
+
+            <!-- Home View -->
+            <div id="viewHome" class="dashboard-view hidden">
+                <div class="welcome-box" style="margin-bottom: 20px;">
+                    <h2>Hello, <span id="welcomeUserName">User</span> 👋</h2>
+                    <p>Welcome to ELSA-CBT Portal. Use the sidebar navigation to launch custom CBT simulators, review exam history, or study past questions.</p>
+                </div>
+
+                <!-- Quick Stats Grid -->
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; margin-bottom: 24px;">
+                    <div style="background: white; padding: 20px; border-radius: 10px; border-left: 5px solid var(--naija-green); box-shadow: 0 2px 4px rgba(0,0,0,0.03);">
+                        <span style="font-size: 0.75rem; font-weight: bold; color: #6b7280; text-transform: uppercase;">Total Students</span>
+                        <h3 id="statTotalStudents" style="font-size: 1.8rem; color: #111827; margin-top: 4px;">0</h3>
+                    </div>
+                    <div style="background: white; padding: 20px; border-radius: 10px; border-left: 5px solid #2563eb; box-shadow: 0 2px 4px rgba(0,0,0,0.03);">
+                        <span style="font-size: 0.75rem; font-weight: bold; color: #6b7280; text-transform: uppercase;">Total Teachers</span>
+                        <h3 id="statTotalTeachers" style="font-size: 1.8rem; color: #111827; margin-top: 4px;">0</h3>
+                    </div>
+                    <div style="background: white; padding: 20px; border-radius: 10px; border-left: 5px solid #d97706; box-shadow: 0 2px 4px rgba(0,0,0,0.03);">
+                        <span style="font-size: 0.75rem; font-weight: bold; color: #6b7280; text-transform: uppercase;">Total Classes</span>
+                        <h3 id="statTotalClasses" style="font-size: 1.8rem; color: #111827; margin-top: 4px;">0</h3>
+                    </div>
+                </div>
+
+                <!-- Historical Performance Analytics -->
+                <div class="welcome-box" style="margin-top: 20px;">
+                    <h3 style="margin-bottom: 12px; color: var(--naija-green);"><i class="fa-solid fa-chart-line"></i> Historical Performance Analytics</h3>
+                    <div style="height: 250px; position: relative;">
+                        <canvas id="homeAnalyticsChart"></canvas>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Exam History & Records View -->
+            <div id="viewHistory" class="dashboard-view hidden">
+                <div class="welcome-box">
+                    <h2 style="color: var(--naija-green); margin-bottom: 4px;"><i class="fa-solid fa-clock-rotate-left"></i> Exam Records & History</h2>
+                    <p style="color: #6b7280; margin-bottom: 20px;">Review all your past CBT sessions, scores, and detailed correction breakdowns.</p>
+                    <div id="examHistoryListContainer" style="display: flex; flex-direction: column; gap: 12px;">
+                        <p style="color: #6b7280;">Loading exam history records...</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Admin Control Panel View -->
+            <div id="viewAdmin" class="dashboard-view hidden">
+                <div class="admin-panel">
+                    <h2>👑 Admin Control Panel</h2>
+                    <p class="admin-subtitle">Manage school classes, teacher/student pre-registrations, and question banks.</p>
+                    
+                    <div class="admin-tabs-row">
+                        <button onclick="switchAdminTab('classes')" id="adminTabBtnClasses" class="admin-tab-btn active">Classes</button>
+                        <button onclick="switchAdminTab('teachers')" id="adminTabBtnTeachers" class="admin-tab-btn">Teachers</button>
+                        <button onclick="switchAdminTab('students')" id="adminTabBtnStudents" class="admin-tab-btn">Students</button>
+                        <button onclick="switchAdminTab('questions')" id="adminTabBtnQuestions" class="admin-tab-btn">Questions</button>
+                        <button onclick="switchAdminTab('results')" id="adminTabBtnResults" class="admin-tab-btn">Results</button>
+                    </div>
+
+                    <!-- Tab 1: Classes Manager -->
+                    <div id="adminPanelClasses" class="admin-tab-content">
+                        <h3>Manage School Classes</h3>
+                        <div class="form-row" style="margin-top: 12px;">
+                            <input type="text" id="newClassNameInput" placeholder="Enter Class Name (e.g. SS 3 Gold)" class="form-select">
+                            <button onclick="createNewClass()" class="primary-btn"><i class="fa-solid fa-plus"></i> Create Class</button>
+                        </div>
+                        <div style="margin-top: 20px;">
+                            <h4 id="classesCountHeader">All Created Classes & Rosters (0)</h4>
+                            <div id="classListContainer" style="margin-top: 10px; max-height: 350px; overflow-y: auto; background: #f9fafb; padding: 12px; border: 1px solid var(--border-color); border-radius: 8px;">
+                                <p style="color: #6b7280; font-size: 0.85rem;">Loading classes...</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Tab 2: Teachers Manager -->
+                    <div id="adminPanelTeachers" class="admin-tab-content hidden">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; flex-wrap: wrap; gap: 8px;">
+                            <h3>Teacher Pre-Registration & Bulk Upload</h3>
+                            <div style="display: flex; align-items: center; gap: 8px;">
+                                <label style="font-size: 0.85rem; font-weight: bold; color: #4b5563;">Filter by Class:</label>
+                                <select id="filterTeacherClass" onchange="fetchTeachersList()" class="form-select" style="padding: 6px; font-size: 0.85rem; max-width: 180px;">
+                                    <option value="ALL">All Classes</option>
+                                </select>
+                            </div>
+                        </div>
+                        
+                        <div style="background: #f9fafb; padding: 16px; border-radius: 8px; border: 1px solid var(--border-color); margin-bottom: 20px;">
+                            <h4 style="margin-bottom: 10px; color: var(--naija-green);"><i class="fa-solid fa-file-csv"></i> Bulk Upload Teachers via CSV</h4>
+                            <div class="form-row">
+                                <button onclick="downloadTeacherCSVTemplate()" class="admin-tab-btn" style="background: #e5e7eb; border-radius: 6px; padding: 8px; font-weight: bold;"><i class="fa-solid fa-download"></i> Download Teacher CSV Template</button>
+                                <input type="file" id="teacherCsvFileInput" accept=".csv" class="form-select">
+                            </div>
+                            <button onclick="parseTeacherCSV()" class="primary-btn" style="width: 100%; margin-top: 10px;">Upload & Pre-Register Teachers</button>
+                        </div>
+
+                        <div style="background: #f9fafb; padding: 16px; border-radius: 8px; border: 1px solid var(--border-color); margin-bottom: 20px;">
+                            <h4 style="margin-bottom: 12px; color: var(--naija-green);"><i class="fa-solid fa-user-plus"></i> Pre-Register Single Teacher</h4>
+                            <div class="teacher-prereg-grid">
+                                <div class="form-group">
+                                    <label>Title</label>
+                                    <select id="teacherTitleSelect" class="form-select">
+                                        <option value="Mr.">Mr.</option>
+                                        <option value="Mrs.">Mrs.</option>
+                                        <option value="Miss">Miss</option>
+                                    </select>
+                                </div>
+                                <div class="form-group" style="flex: 2;">
+                                    <label>Teacher Full Name</label>
+                                    <input type="text" id="teacherNameInput" placeholder="e.g. Adebayo Johnson" class="form-select">
+                                </div>
+                            </div>
+                            <div class="teacher-prereg-grid" style="margin-top: 10px;">
+                                <div class="form-group" style="flex: 2;">
+                                    <label>Teacher Gmail</label>
+                                    <input type="email" id="teacherEmailInput" placeholder="teacher@gmail.com" class="form-select" oninput="validateGmailInput(this)">
+                                    <small id="teacherEmailWarning" class="gmail-warning hidden">⚠️ Please enter a valid @gmail.com address.</small>
+                                </div>
+                                <div class="form-group">
+                                    <label>Assign Class</label>
+                                    <select id="teacherClassDropdownSelect" class="form-select">
+                                        <option value="">-- Assign Class --</option>
+                                    </select>
+                                </div>
+                                <div class="form-group">
+                                    <label>Gender</label>
+                                    <select id="teacherGenderSelect" class="form-select">
+                                        <option value="Male">Male</option>
+                                        <option value="Female">Female</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <button onclick="preRegisterTeacher()" class="primary-btn" style="width: 100%; margin-top: 14px;">Pre-Register Teacher</button>
+                        </div>
+
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                            <h4 id="teachersCountHeader">All Registered Teachers (0)</h4>
+                        </div>
+                        <div id="teachersListContainer" style="margin-top: 10px; max-height: 300px; overflow-y: auto; background: #f9fafb; padding: 12px; border: 1px solid var(--border-color); border-radius: 8px;">
+                            <p style="color: #6b7280; font-size: 0.85rem;">Loading teachers...</p>
+                        </div>
+                    </div>
+
+                    <!-- Tab 3: Students Manager -->
+                    <div id="adminPanelStudents" class="admin-tab-content hidden">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; flex-wrap: wrap; gap: 8px;">
+                            <h3>Student Registration & Bulk Upload</h3>
+                            <div style="display: flex; align-items: center; gap: 8px;">
+                                <label style="font-size: 0.85rem; font-weight: bold; color: #4b5563;">Filter by Class:</label>
+                                <select id="filterStudentClass" onchange="fetchStudentsList()" class="form-select" style="padding: 6px; font-size: 0.85rem; max-width: 180px;">
+                                    <option value="ALL">All Classes</option>
+                                </select>
+                            </div>
+                        </div>
+                        
+                        <div style="background: #f9fafb; padding: 16px; border-radius: 8px; border: 1px solid var(--border-color); margin-bottom: 20px;">
+                            <h4 style="margin-bottom: 10px; color: var(--naija-green);"><i class="fa-solid fa-file-csv"></i> Bulk Upload Students via CSV</h4>
+                            <div class="form-row">
+                                <button onclick="downloadStudentCSVTemplate()" class="admin-tab-btn" style="background: #e5e7eb; border-radius: 6px; padding: 8px; font-weight: bold;"><i class="fa-solid fa-download"></i> Download Student CSV Template</button>
+                                <input type="file" id="studentCsvFileInput" accept=".csv" class="form-select">
+                            </div>
+                            <button onclick="parseStudentCSV()" class="primary-btn" style="width: 100%; margin-top: 10px;">Upload & Register Students</button>
+                        </div>
+
+                        <div style="background: #f9fafb; padding: 16px; border-radius: 8px; border: 1px solid var(--border-color); margin-bottom: 20px;">
+                            <h4 style="margin-bottom: 10px; color: var(--naija-green);"><i class="fa-solid fa-user-plus"></i> Pre-Register Single Student</h4>
+                            <div class="form-row" style="margin-bottom: 8px;">
+                                <input type="text" id="studentNameInput" placeholder="Student Full Name" class="form-select">
+                                <div class="form-group" style="flex:1;">
+                                    <input type="email" id="studentEmailInput" placeholder="Student Gmail" class="form-select" oninput="validateGmailInput(this)">
+                                    <small id="studentEmailWarning" class="gmail-warning hidden">⚠️ Please enter a valid @gmail.com address.</small>
+                                </div>
+                            </div>
+                            <div class="form-row" style="margin-bottom: 12px;">
+                                <select id="studentClassDropdownSelect" class="form-select">
+                                    <option value="">-- Select Available Class --</option>
+                                </select>
+                                <select id="studentExamTrackSelect" class="form-select">
+                                    <option value="ALL">All Exams (JAMB, WAEC, NECO)</option>
+                                    <option value="JAMB">JAMB Candidate</option>
+                                    <option value="WAEC">WAEC Candidate</option>
+                                    <option value="NECO">NECO Candidate</option>
+                                </select>
+                            </div>
+                            <div class="form-row" style="margin-bottom: 12px;">
+                                <select id="studentGenderSelect" class="form-select">
+                                    <option value="Male">Male</option>
+                                    <option value="Female">Female</option>
+                                </select>
+                            </div>
+                            <button onclick="registerStudentByAdmin()" class="primary-btn">Pre-Register Student</button>
+                        </div>
+
+                        <h4 id="studentsCountHeader">All Registered Students (0)</h4>
+                        <div id="studentsListContainer" style="margin-top: 10px; max-height: 300px; overflow-y: auto; background: #f9fafb; padding: 12px; border: 1px solid var(--border-color); border-radius: 8px;">
+                            <p style="color: #6b7280; font-size: 0.85rem;">Loading students...</p>
+                        </div>
+                    </div>
+
+                    <!-- Tab 4: Questions Manager -->
+                    <div id="adminPanelQuestions" class="admin-tab-content hidden">
+                        <h3>Add & Manage Question Bank</h3>
+                        <div style="background: #f9fafb; padding: 16px; border-radius: 8px; border: 1px solid var(--border-color); margin-bottom: 20px;">
+                            <h4 style="margin-bottom: 10px; color: var(--naija-green);"><i class="fa-solid fa-download"></i> Download Official Exam CSV Templates</h4>
+                            <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+                                <button onclick="downloadCSVTemplate('JAMB')" class="primary-btn" style="background: #2563eb;"><i class="fa-solid fa-file-csv"></i> JAMB Template</button>
+                                <button onclick="downloadCSVTemplate('WAEC')" class="primary-btn" style="background: #d97706;"><i class="fa-solid fa-file-csv"></i> WAEC Template</button>
+                                <button onclick="downloadCSVTemplate('NECO')" class="primary-btn" style="background: #008751;"><i class="fa-solid fa-file-csv"></i> NECO Template</button>
+                            </div>
+                        </div>
+
+                        <div style="background: #f9fafb; padding: 16px; border-radius: 8px; border: 1px solid var(--border-color); margin-bottom: 20px;">
+                            <h4 style="margin-bottom: 10px; color: var(--naija-green);"><i class="fa-solid fa-plus"></i> Add Single Question Manually</h4>
+                            <input type="hidden" id="editQuestionId" value="">
+                            <div class="form-row" style="margin-bottom: 8px;">
+                                <select id="singleExamType" class="form-select">
+                                    <option value="JAMB">JAMB</option>
+                                    <option value="WAEC">WAEC</option>
+                                    <option value="NECO">NECO</option>
+                                </select>
+                                <select id="singleSubject" class="form-select subject-dropdown"></select>
+                                <input type="text" id="singleYear" placeholder="Year (e.g. 2026)" class="form-select">
+                            </div>
+                            <div class="form-group" style="margin-bottom: 8px;">
+                                <textarea id="singleQuestionText" placeholder="Type question text here..." class="form-select" rows="2" style="resize: vertical;"></textarea>
+                            </div>
+                            <div class="form-row" style="margin-bottom: 8px;">
+                                <input type="text" id="singleOptA" placeholder="Option A" class="form-select">
+                                <input type="text" id="singleOptB" placeholder="Option B" class="form-select">
+                            </div>
+                            <div class="form-row" style="margin-bottom: 8px;">
+                                <input type="text" id="singleOptC" placeholder="Option C" class="form-select">
+                                <input type="text" id="singleOptD" placeholder="Option D" class="form-select">
+                            </div>
+                            <div class="form-row" style="margin-bottom: 12px;">
+                                <select id="singleCorrect" class="form-select">
+                                    <option value="A">Correct Option: A</option>
+                                    <option value="B">Correct Option: B</option>
+                                    <option value="C">Correct Option: C</option>
+                                    <option value="D">Correct Option: D</option>
+                                </select>
+                                <input type="text" id="singleExplanation" placeholder="Explanation for solution" class="form-select">
+                            </div>
+                            <button onclick="saveSingleQuestion()" class="primary-btn" id="saveQuestionBtn">Save Question to Database</button>
+                            <button onclick="resetQuestionForm()" class="logout-btn hidden" id="cancelEditBtn" style="background: #4b5563; margin-left: 8px;">Cancel Edit</button>
+                        </div>
+
+                        <div class="cbt-card" style="margin-bottom: 20px;">
+                            <div>
+                                <label class="form-label">Bulk Upload Completed CSV File</label>
+                                <input type="file" id="csvFileInput" accept=".csv" class="form-select">
+                            </div>
+                            <div style="display: flex; align-items: flex-end;">
+                                <button onclick="parseCSVQuestions()" class="primary-btn" style="width: 100%;"><i class="fa-solid fa-upload"></i> Upload & Parse CSV</button>
+                            </div>
+                        </div>
+
+                        <div style="border-top: 1px solid var(--border-color); padding-top: 16px;">
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; flex-wrap: wrap; gap: 8px;">
+                                <h4>Existing Question Bank Inspector</h4>
+                                <div style="display: flex; gap: 8px;">
+                                    <button onclick="fetchQuestionsForManagement('JAMB')" class="admin-tab-btn active" id="btnManageJAMB">JAMB</button>
+                                    <button onclick="fetchQuestionsForManagement('WAEC')" class="admin-tab-btn" id="btnManageWAEC">WAEC</button>
+                                    <button onclick="fetchQuestionsForManagement('NECO')" class="admin-tab-btn" id="btnManageNECO">NECO</button>
+                                </div>
+                            </div>
+                            <div id="questionBankList" style="max-height: 400px; overflow-y: auto; background: #f9fafb; border: 1px solid var(--border-color); border-radius: 8px; padding: 12px;">
+                                <p style="color: #6b7280; font-size: 0.85rem;">Select an exam track above to view, edit, publish/unpublish, or delete questions.</p>
+                            </div>
+                        </div>
+
+                        <div style="margin-top: 30px; border: 2px dashed #dc2626; background: #fef2f2; padding: 16px; border-radius: 8px;">
+                            <h4 style="color: #991b1b; margin-bottom: 4px;"><i class="fa-solid fa-triangle-exclamation"></i> Danger Zone: Delete Entire Question Track</h4>
+                            <p style="font-size: 0.8rem; color: #7f1d1d; margin-bottom: 12px;">Permanently wipe all questions under the currently selected exam track.</p>
+                            <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+                                <input type="text" id="deleteConfirmationInput" placeholder="Type 'DELETE JAMB' to unlock" class="form-select" style="max-width: 300px; background: white;" oninput="checkDeleteConfirmation(this)">
+                                <button onclick="clearSelectedExamTrack()" id="dangerDeleteBtn" class="logout-btn" disabled style="background: #9ca3af; cursor: not-allowed;"><i class="fa-solid fa-trash"></i> Delete All Track Questions</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Tab 5: Results -->
+                    <div id="adminPanelResults" class="admin-tab-content hidden">
+                        <h3>Student Examination Results Log</h3>
+                        <div id="adminResultsLog" style="margin-top: 12px;">
+                            <p style="color: #6b7280; font-size: 0.9rem;">No student scores recorded yet.</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- CBT Simulator Customizer View -->
+            <div id="viewCBT" class="dashboard-view hidden">
+                <div id="examHeaderBanner" class="cbt-banner">
+                    <h3 id="cbtExamTitle">CBT Simulator</h3>
+                    <p id="cbtExamRules">Configured for official Nigerian examination standards.</p>
+                </div>
+
+                <div id="cbtCustomizerCard" class="cbt-card">
+                    <div class="cbt-options">
+                        <div id="subjectCountSelectorArea">
+                            <label class="form-label">Number of subjects to be tested on;</label>
+                            <select id="subjectCountSelect" onchange="generateSubjectDropdowns()" class="form-select">
+                                <option value="4">4 Subjects (JAMB Standard)</option>
+                                <option value="1">1 Subject</option>
+                                <option value="2">2 Subjects</option>
+                                <option value="3">3 Subjects</option>
+                                <option value="5">5 Subjects</option>
+                                <option value="6">6 Subjects</option>
+                                <option value="7">7 Subjects (WAEC/NECO)</option>
+                                <option value="8">8 Subjects</option>
+                                <option value="9">9 Subjects</option>
+                            </select>
+                        </div>
+                        <div id="dynamicSubjectsContainer" class="subject-stack"></div>
+                    </div>
+
+                    <div class="cbt-modes" id="cbtModesContainer">
+                        <p class="form-label">⏱️ Select Test Mode / Duration</p>
+                        <div id="btnPracticeMode" onclick="selectTestDuration(40)" class="mode-box">
+                            <h3>40</h3>
+                            <span>Minutes (Practice: 20 Qs Eng + 10 Qs others, /200)</span>
+                        </div>
+                        <div id="btnFullTestMode" onclick="selectTestDuration(120)" class="mode-box active-mode">
+                            <h3>120</h3>
+                            <span>Minutes (Full UTME: 60 Qs Eng + 40 Qs others, /400)</span>
+                        </div>
+                        <button id="proceedExamBtn" onclick="launchStandaloneExam()" class="primary-btn muted-btn" disabled style="opacity: 0.5; cursor: not-allowed;">Proceed to Exam</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Study Hub View -->
+            <div id="viewStudyHub" class="dashboard-view hidden">
+                <div class="cbt-banner" style="background: var(--naija-green-light); border-color: #bbf7d0;">
+                    <h3 id="studyHubTitle" style="color: var(--naija-green-dark);">📖 Study Past Questions Hub</h3>
+                    <p style="color: var(--naija-green-dark);">Review all available questions in the database with instant step-by-step explanations. No time limits!</p>
+                </div>
+                <div id="studyQuestionsContainer" style="display: flex; flex-direction: column; gap: 16px; margin-top: 16px;"></div>
+                <button onclick="showView('viewHome')" class="primary-btn" style="margin-top: 20px; background: #4b5563;"><i class="fa-solid fa-arrow-left"></i> Back to Dashboard</button>
+            </div>
+
+        </main>
+    </div>
+
+    <!-- Standalone Fullscreen CBT Window Overlay -->
+    <div id="standaloneCbtWindow" class="standalone-cbt-overlay hidden">
+        <div class="exam-active-box" style="width: 100%; max-width: 1100px; margin: 20px auto; max-height: 95vh; overflow-y: auto;">
+            <div class="exam-top-bar">
+                <div style="display: flex; align-items: center; gap: 12px;">
+                    <span class="brand-badge" id="standaloneExamBadge">JAMB CBT</span>
+                    <span id="cbtTimer" class="exam-timer">Time Left: 120:00</span>
+                </div>
+                <div style="display: flex; align-items: center; gap: 10px;">
+                    <button onclick="toggleCBTCalculator()" class="calc-icon-btn" title="Open Calculator"><i class="fa-solid fa-calculator"></i> Calculator</button>
+                    <span class="focus-badge">🛡️ ANTI-CHEAT ACTIVE</span>
+                    <button onclick="closeStandaloneCbtWindow()" class="logout-btn" style="padding: 4px 10px;" title="Exit Exam">&times; Exit</button>
+                </div>
+            </div>
+
+            <!-- Simple Calculator Popup Box -->
+            <div id="cbtCalculatorBox" class="calc-popup hidden">
+                <div class="calc-header">
+                    <span>Standard Calculator</span>
+                    <button onclick="toggleCBTCalculator()" style="background:none;border:none;color:white;cursor:pointer;font-weight:bold;">&times;</button>
+                </div>
+                <input type="text" id="calcScreen" readonly value="0">
+                <div class="calc-keypad">
+                    <button onclick="calcClear()">C</button>
+                    <button onclick="calcAppend('/')">/</button>
+                    <button onclick="calcAppend('*')">×</button>
+                    <button onclick="calcBack()">⌫</button>
+                    <button onclick="calcAppend('7')">7</button>
+                    <button onclick="calcAppend('8')">8</button>
+                    <button onclick="calcAppend('9')">9</button>
+                    <button onclick="calcAppend('-')">-</button>
+                    <button onclick="calcAppend('4')">4</button>
+                    <button onclick="calcAppend('5')">5</button>
+                    <button onclick="calcAppend('6')">6</button>
+                    <button onclick="calcAppend('+')">+</button>
+                    <button onclick="calcAppend('1')">1</button>
+                    <button onclick="calcAppend('2')">2</button>
+                    <button onclick="calcAppend('3')">3</button>
+                    <button onclick="calcCompute()" style="grid-row: span 2; background: var(--naija-green); color:white;">=</button>
+                    <button onclick="calcAppend('0')" style="grid-column: span 2;">0</button>
+                    <button onclick="calcAppend('.')">.</button>
+                </div>
+            </div>
+
+            <div id="questionContainer"></div>
+            <button onclick="submitExamManually()" class="submit-btn">Submit Exam</button>
+        </div>
+    </div>
+
+    <!-- CBT Results Analysis Card -->
+    <div id="standaloneResultsWindow" class="standalone-cbt-overlay hidden">
+        <div class="welcome-box" style="width: 100%; max-width: 850px; margin: 20px auto; border: 2px solid var(--naija-green); max-height: 95vh; overflow-y: auto;">
+            <div style="border-bottom: 2px solid var(--naija-green-light); padding-bottom: 12px; margin-bottom: 16px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
+                <div>
+                    <h2 style="color: var(--naija-green); font-size: 1.5rem; font-weight: bold;">📊 Examination Performance Slip</h2>
+                    <p style="color: #4b5563; font-size: 0.85rem;" id="resultsTimestamp"></p>
+                </div>
+                <span id="overallPercentageBadge" class="brand-badge" style="background: var(--naija-green); color: white; font-size: 1.25rem;">0%</span>
+            </div>
+
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-bottom: 20px;">
+                <div style="background: var(--naija-green-light); padding: 12px; border-radius: 8px; text-align: center;">
+                    <span style="font-size: 0.75rem; font-weight: bold; color: var(--naija-green-dark);" id="resScoreHeaderLabel">TOTAL SCORE</span>
+                    <h3 id="resTotalScore" style="font-size: 1.5rem; color: var(--naija-green-dark); margin-top: 4px;">0 / 400</h3>
+                </div>
+                <div style="background: #fef2f2; padding: 12px; border-radius: 8px; text-align: center;">
+                    <span style="font-size: 0.75rem; font-weight: bold; color: #991b1b;">WEAKEST SUBJECT</span>
+                    <h3 id="resWeakSubject" style="font-size: 1.1rem; color: #991b1b; margin-top: 4px;">None</h3>
+                </div>
+                <div style="background: #eff6ff; padding: 12px; border-radius: 8px; text-align: center;">
+                    <span style="font-size: 0.75rem; font-weight: bold; color: #1e40af;">EXAM GRADE / STATUS</span>
+                    <h3 id="resGradeStatus" style="font-size: 1.1rem; color: #1e40af; margin-top: 4px;">DISTINCTION</h3>
+                </div>
+            </div>
+
+            <h4 style="margin-bottom: 8px; color: #374151;">Subject-by-Subject Breakdown & Grading</h4>
+            <div id="resSubjectBreakdownList" style="display: flex; flex-direction: column; gap: 8px; margin-bottom: 20px;"></div>
+
+            <h4 style="margin-bottom: 8px; color: #374151;">Detailed Answers & CBT Corrections Review</h4>
+            <div id="resDetailedReviewList" style="max-height: 350px; overflow-y: auto; background: #f9fafb; border: 1px solid var(--border-color); border-radius: 8px; padding: 12px; margin-bottom: 20px;"></div>
+
+            <div style="display: flex; gap: 10px;">
+                <button onclick="closeStandaloneResultsWindow()" class="primary-btn" style="flex: 1;">Return to Dashboard</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Full Question View Modal -->
+    <div id="questionViewModal" class="modal-overlay hidden">
+        <div class="modal-card" style="max-width: 600px;">
+            <div class="modal-header">
+                <h3>📖 Question Details</h3>
+                <button onclick="closeQuestionModal()" class="close-modal">&times;</button>
+            </div>
+            <div id="modalQuestionContent" style="margin-top: 16px; display: flex; flex-direction: column; gap: 10px; font-size: 0.9rem;"></div>
+        </div>
+    </div>
+
+    <!-- Explanation Modal (Study Hub) -->
+    <div id="explanationModal" class="modal-overlay hidden">
+        <div class="modal-card" style="max-width: 500px;">
+            <div class="modal-header">
+                <h3 style="color: var(--naija-green);"><i class="fa-solid fa-lightbulb"></i> Solution & Explanation</h3>
+                <button onclick="closeExplanationModal()" class="close-modal">&times;</button>
+            </div>
+            <div id="explanationModalBody" style="margin-top: 16px; display: flex; flex-direction: column; gap: 12px; font-size: 0.9rem;"></div>
+            <button onclick="closeExplanationModal()" class="primary-btn" style="width: 100%; margin-top: 16px;">Close (Esc)</button>
+        </div>
+    </div>
+
+    <!-- PDF Profile Viewer Modal -->
+    <div id="profileModal" class="modal-overlay hidden">
+        <div class="modal-card" style="max-width: 520px; text-align: center;">
+            <div class="modal-header" style="text-align: left;">
+                <h3 id="profileModalTitle">User Profile</h3>
+                <button onclick="closeProfileModal()" class="close-modal">&times;</button>
+            </div>
+            <div id="pdfProfileContent" class="pdf-slip-container">
+                <div class="pdf-header">
+                    <h2 style="color: #008751; font-size: 1.1rem; font-weight: 900; margin-bottom: 2px;">EXCELLENT LEARNERS SOLUTION ACADEMY</h2>
+                    <p style="font-size: 0.75rem; color: #1f2937; font-weight: bold; text-transform: uppercase;">Official Identification & Profile Slip[cite: 8]</p>
+                </div>
+                <div class="pdf-body-grid">
+                    <div class="pdf-avatar-box">
+                        <div id="profileAvatarContainer" style="width: 90px; height: 90px; background: #e6f4ea; color: #008751; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 2.5rem; overflow: hidden; border: 3px solid #008751; margin: 0 auto;">
+                            <i class="fa-solid fa-user" id="profileDefaultIcon"></i>
+                            <img id="profilePassportImg" src="" alt="Passport" style="width: 100%; height: 100%; object-fit: cover; display: none;">
+                        </div>
+                    </div>
+                    <div id="profileModalBody" class="pdf-info-stack"></div>
+                </div>
+                <div class="pdf-footer-note">
+                    <p>Verified ELSA-CBT Portal System Record • Authorized Document</p>
+                </div>
+            </div>
+            <div style="display: flex; gap: 10px; margin-top: 16px;">
+                <button onclick="openEditProfileModal()" class="primary-btn" style="flex: 1; background: #2563eb;"><i class="fa-solid fa-pen-to-square"></i> Edit Profile</button>
+                <button onclick="downloadProfilePDF()" class="primary-btn" style="flex: 1;"><i class="fa-solid fa-file-pdf"></i> Download PDF Slip</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Edit User Profile Modal -->
+    <div id="editProfileModal" class="modal-overlay hidden">
+        <div class="modal-card" style="max-width: 450px;">
+            <div class="modal-header">
+                <h3>Edit User Profile</h3>
+                <button onclick="closeEditProfileModal()" class="close-modal">&times;</button>
+            </div>
+            <input type="hidden" id="editUserId">
+            <input type="hidden" id="editUserRole">
+            <div style="margin-top: 16px; display: flex; flex-direction: column; gap: 12px;">
+                <div class="form-group" id="editTeacherTitleGroup" style="display: none;">
+                    <label>Teacher Title</label>
+                    <select id="editTeacherTitle" class="form-select">
+                        <option value="Mr.">Mr.</option>
+                        <option value="Mrs.">Mrs.</option>
+                        <option value="Miss">Miss</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Full Name</label>
+                    <input type="text" id="editProfileName" class="form-select">
+                </div>
+                <div class="form-group">
+                    <label>Gmail Address</label>
+                    <input type="email" id="editProfileEmail" class="form-select" oninput="validateGmailInput(this)">
+                    <small id="editEmailWarning" class="gmail-warning hidden">⚠️ Please enter a valid @gmail.com address.</small>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Gender</label>
+                        <select id="editProfileGender" class="form-select">
+                            <option value="Male">Male</option>
+                            <option value="Female">Female</option>
+                        </select>
+                    </div>
+                    <div class="form-group" id="editProfileTrackGroup">
+                        <label>Exam Track</label>
+                        <select id="editProfileTrack" class="form-select">
+                            <option value="ALL">All Exams</option>
+                            <option value="JAMB">JAMB</option>
+                            <option value="WAEC">WAEC</option>
+                            <option value="NECO">NECO</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Assigned Class</label>
+                    <select id="editProfileClass" class="form-select"></select>
+                </div>
+            </div>
+            <button onclick="saveProfileEdits()" class="primary-btn" style="width: 100%; margin-top: 16px;">Save Changes</button>
+        </div>
+    </div>
+
+    <!-- Reassign Class Modal -->
+    <div id="reassignModal" class="modal-overlay hidden">
+        <div class="modal-card" style="max-width: 400px;">
+            <div class="modal-header">
+                <h3>Assign / De-assign Class</h3>
+                <button onclick="closeReassignModal()" class="close-modal">&times;</button>
+            </div>
+            <input type="hidden" id="reassignUserId">
+            <div style="margin-top: 16px;" class="form-group">
+                <label>Select Target Class</label>
+                <select id="reassignClassSelect" class="form-select"></select>
+            </div>
+            <button onclick="saveUserReassignment()" class="primary-btn" style="width: 100%; margin-top: 16px;">Save Assignment</button>
+        </div>
+    </div>
+
+    <!-- Study Hub Filter Modal -->
+    <div id="studyModal" class="modal-overlay hidden">
+        <div class="modal-card" style="max-width: 500px;">
+            <div class="modal-header">
+                <h3>🔍 Study Past Questions Hub</h3>
+                <button onclick="closeStudyModal()" class="close-modal">&times;</button>
+            </div>
+            <div style="margin-top: 16px; display: flex; flex-direction: column; gap: 12px;">
+                <div class="form-group">
+                    <label>Examination Type</label>
+                    <select id="studyExamTypeSelect" class="form-select" onchange="fetchStudyQuestionCount()">
+                        <option value="JAMB">JAMB UTME</option>
+                        <option value="WAEC">WAEC WASSCE</option>
+                        <option value="NECO">NECO SSCE</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Subject</label>
+                    <select id="studySubjectSelect" class="form-select subject-dropdown" onchange="fetchStudyQuestionCount()"></select>
+                </div>
+                <div id="studyQuestionCountDisplay" style="background: var(--naija-green-light); border: 1px solid #bbf7d0; padding: 12px; border-radius: 8px; text-align: center; font-size: 0.9rem; font-weight: bold; color: var(--naija-green-dark);">
+                    Available Questions: Loading...
+                </div>
+            </div>
+            <button onclick="startStudySession()" class="primary-btn" style="width: 100%; margin-top: 16px;"><i class="fa-solid fa-play"></i> Start Study Session</button>
+        </div>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>

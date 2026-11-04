@@ -1,0 +1,5 @@
+question_id,examType,subject,year,question_text,option_a,option_b,option_c,option_d,correct_option,explanation
+JAMB_ENG_001,JAMB,Use of English,2026,"Choose the option opposite in meaning to the word: *irrevocable*.",Unchangeable,Reversible,Temporary,Final,B,"Reversible is the opposite of irrevocable."
+JAMB_MTH_001,JAMB,Mathematics,2026,"Evaluate: 3x - 5 = 10. Find x.",3,5,15,2,B,"3x = 15, so x = 5."
+WAEC_PHY_001,WAEC,Physics,2026,"What is the S.I. unit of Force?",Joule,Watt,Newton,Pascal,C,"Newton (N) is the S.I. unit of Force."
+NECO_CHM_001,NECO,Chemistry,2026,"What is the chemical formula for water?",CO2,H2O,NaCl,O2,B,"Water consists of two Hydrogen atoms and one Oxygen atom."

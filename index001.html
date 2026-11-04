@@ -1,0 +1,522 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ELSA-CBT Management System</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        naijaGreen: {
+                            DEFAULT: '#008751',
+                            dark: '#00663d',
+                            light: '#e6f4ea'
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    <!-- Firebase SDKs -->
+    <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-firestore-compat.js"></script>
+</head>
+<body class="bg-gray-100 text-gray-800 font-sans min-h-screen flex flex-col">
+
+    <!-- Top Header Bar -->
+    <header class="bg-naijaGreen text-white shadow-md py-3 px-6 flex justify-between items-center z-20">
+        <div class="flex items-center space-x-3">
+            <span class="text-xl font-black tracking-wider bg-white text-naijaGreen border border-white px-3 py-1 rounded">ELSA-CBT</span>
+            <div>
+                <h1 id="schoolTitleDisplay" class="text-sm font-bold leading-tight">Excellent Learners Solution Academy</h1>
+                <p class="text-xs text-green-100">Secure CBT & Portal System</p>
+            </div>
+        </div>
+        
+        <div class="flex items-center space-x-4">
+            <div class="flex items-center space-x-2 bg-white/20 px-3 py-1.5 rounded-full border border-white/30">
+                <span id="userStatusBadge" class="text-xs font-bold text-white">Loading...</span>
+            </div>
+            <button id="logoutBtn" onclick="handleLogout()" class="hidden bg-red-600 hover:bg-red-700 text-white text-xs px-3 py-1.5 rounded font-bold transition">Logout</button>
+        </div>
+    </header>
+
+    <!-- Main Body Layout -->
+    <div class="flex flex-grow relative">
+
+        <!-- Sidebar Navigation -->
+        <aside id="appSidebar" class="hidden w-64 bg-white border-r border-gray-200 shadow-sm flex flex-col justify-between min-h-[calc(100vh-57px)]">
+            <div class="p-3 space-y-2 overflow-y-auto">
+                <nav class="space-y-1">
+                    <button onclick="showView('viewHome')" class="w-full flex items-center px-3 py-2 text-sm font-medium text-gray-700 hover:bg-naijaGreen-light hover:text-naijaGreen rounded-lg transition">🏠 Home Dashboard</button>
+                </nav>
+
+                <div class="pt-2">
+                    <p class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1 px-3">Test & Simulators</p>
+                    <nav class="space-y-1">
+                        <button onclick="launchExamMode('JAMB')" class="w-full flex items-center px-3 py-2 text-sm font-medium text-gray-700 hover:bg-naijaGreen-light hover:text-naijaGreen rounded-lg transition">🇳🇬 JAMB CBT Simulator</button>
+                        <button onclick="launchExamMode('WAEC')" class="w-full flex items-center px-3 py-2 text-sm font-medium text-gray-700 hover:bg-naijaGreen-light hover:text-naijaGreen rounded-lg transition">📚 WAEC CBT Simulator</button>
+                        <button onclick="launchExamMode('NECO')" class="w-full flex items-center px-3 py-2 text-sm font-medium text-gray-700 hover:bg-naijaGreen-light hover:text-naijaGreen rounded-lg transition">📖 NECO CBT Simulator</button>
+                    </nav>
+                </div>
+
+                <div class="pt-2">
+                    <p class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1 px-3">Study Hub</p>
+                    <nav class="space-y-1">
+                        <button onclick="openStudyModal()" class="w-full flex items-center px-3 py-2 text-sm font-medium text-gray-700 hover:bg-naijaGreen-light hover:text-naijaGreen rounded-lg transition">🔍 Study Past Questions</button>
+                    </nav>
+                </div>
+
+                <div id="roleSpecificMenu" class="pt-2 hidden">
+                    <p class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1 px-3">Administration</p>
+                    <nav class="space-y-1">
+                        <button onclick="showView('viewAdmin')" class="w-full flex items-center px-3 py-2 text-sm font-medium text-naijaGreen hover:bg-green-50 rounded-lg transition">👑 Admin Dashboard</button>
+                    </nav>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Main Workspace -->
+        <main class="flex-grow p-6 overflow-y-auto">
+
+            <!-- Auth Form Card -->
+            <section id="authSection" class="bg-white rounded-xl shadow-lg p-6 md:p-8 max-w-md mx-auto mt-10 border-t-4 border-naijaGreen hidden">
+                <div class="flex border-b mb-6">
+                    <button id="tabLogin" onclick="switchAuthTab('login')" class="w-1/2 pb-2 font-bold text-naijaGreen border-b-2 border-naijaGreen">Login</button>
+                    <button id="tabSignup" onclick="switchAuthTab('signup')" class="w-1/2 pb-2 font-semibold text-gray-400">Sign Up</button>
+                </div>
+
+                <!-- Login Form -->
+                <form id="loginForm" class="space-y-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700">Gmail Address</label>
+                        <input type="email" id="loginEmail" required class="w-full mt-1 px-4 py-2 border rounded-lg focus:ring-2 focus:ring-naijaGreen focus:outline-none" placeholder="user@gmail.com">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700">Password</label>
+                        <input type="password" id="loginPassword" required class="w-full mt-1 px-4 py-2 border rounded-lg focus:ring-2 focus:ring-naijaGreen focus:outline-none" placeholder="••••••••">
+                    </div>
+                    <div class="flex justify-between text-sm">
+                        <button type="button" onclick="handleForgotPassword()" class="text-naijaGreen hover:underline">Forgot Password?</button>
+                    </div>
+                    <button type="submit" class="w-full bg-naijaGreen text-white py-2 rounded-lg font-bold hover:bg-naijaGreen-dark transition">Login to Portal</button>
+                </form>
+
+                <!-- Sign Up Form -->
+                <form id="signupForm" class="space-y-4 hidden">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700">Username / Full Name</label>
+                        <input type="text" id="signupUsername" required class="w-full mt-1 px-3 py-2 border rounded-lg" placeholder="e.g. Naeemah">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700">Gmail Address</label>
+                        <input type="email" id="signupEmail" required class="w-full mt-1 px-3 py-2 border rounded-lg" placeholder="user@gmail.com">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700">Password</label>
+                        <input type="password" id="signupPassword" required class="w-full mt-1 px-3 py-2 border rounded-lg" placeholder="••••••••">
+                    </div>
+                    <div class="grid grid-cols-2 gap-2">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700">Role</label>
+                            <select id="signupRole" class="w-full mt-1 p-2 border rounded-lg text-sm">
+                                <option value="student">Student</option>
+                                <option value="teacher">Teacher</option>
+                                <option value="admin">Admin</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700">Gender</label>
+                            <select id="signupGender" class="w-full mt-1 p-2 border rounded-lg text-sm">
+                                <option value="Male">Male</option>
+                                <option value="Female">Female</option>
+                            </select>
+                        </div>
+                    </div>
+                    <button type="submit" class="w-full bg-naijaGreen text-white py-2 rounded-lg font-bold hover:bg-naijaGreen-dark transition">Create Account</button>
+                </form>
+            </section>
+
+            <!-- Dashboard View: Home -->
+            <div id="viewHome" class="dashboard-view hidden space-y-6">
+                <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
+                    <h2 class="text-2xl font-bold text-gray-800">Hello, <span id="welcomeUserName" class="text-naijaGreen">User</span> 👋</h2>
+                    <p class="text-sm text-gray-500 mt-1">Select a CBT simulator or manage school settings from the menu.</p>
+                </div>
+            </div>
+
+            <!-- Dashboard View: Full Admin Management Panel -->
+            <div id="viewAdmin" class="dashboard-view hidden space-y-6">
+                <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
+                    <h2 class="text-xl font-bold text-naijaGreen mb-4">👑 Admin Control Panel</h2>
+
+                    <!-- Admin Tabs -->
+                    <div class="flex border-b mb-6 space-x-4">
+                        <button onclick="switchAdminTab('teachers')" id="tabAdminTeachers" class="pb-2 font-bold text-naijaGreen border-b-2 border-naijaGreen">Manage Teachers</button>
+                        <button onclick="switchAdminTab('questions')" id="tabAdminQuestions" class="pb-2 font-semibold text-gray-500">Upload Questions (CSV)</button>
+                        <button onclick="switchAdminTab('results')" id="tabAdminResults" class="pb-2 font-semibold text-gray-500">Student Results</button>
+                    </div>
+
+                    <!-- 1. Add / Assign Teachers -->
+                    <div id="adminTabTeachers" class="space-y-4">
+                        <h3 class="text-md font-semibold text-gray-700">Assign Class to Teacher</h3>
+                        <div class="grid md:grid-cols-3 gap-3">
+                            <input type="email" id="teacherEmailInput" placeholder="Teacher Email" class="p-2 border rounded-lg text-sm">
+                            <input type="text" id="teacherClassInput" placeholder="Class Name (e.g. SS3 Gold)" class="p-2 border rounded-lg text-sm">
+                            <button onclick="assignTeacherClass()" class="bg-naijaGreen text-white font-bold py-2 rounded-lg text-sm">Assign Class</button>
+                        </div>
+                    </div>
+
+                    <!-- 2. CSV Question Upload -->
+                    <div id="adminTabQuestions" class="space-y-4 hidden">
+                        <h3 class="text-md font-semibold text-gray-700">Bulk Question Uploader</h3>
+                        <input type="file" id="csvFileInput" accept=".csv" class="w-full border p-2 rounded-lg text-sm">
+                        <button onclick="parseCSVQuestions()" class="bg-naijaGreen text-white font-bold px-6 py-2 rounded-lg text-sm">Upload & Save CSV Questions</button>
+                    </div>
+
+                    <!-- 3. View Student Results -->
+                    <div id="adminTabResults" class="space-y-4 hidden">
+                        <h3 class="text-md font-semibold text-gray-700">Student Examination Records</h3>
+                        <div class="p-4 bg-gray-50 border rounded-lg text-sm text-gray-600">
+                            No exam submissions logged yet. Student scores will appear here automatically.
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Dashboard View: CBT Simulator (WAEC / NECO / JAMB) -->
+            <div id="viewCBT" class="dashboard-view hidden space-y-6">
+                <div id="examHeaderBanner" class="bg-green-50 border border-green-200 p-4 rounded-xl">
+                    <h3 id="cbtExamTitle" class="text-lg font-bold text-green-900">CBT Simulator</h3>
+                    <p id="cbtExamRules" class="text-xs text-green-700 mt-1">Get exam-ready with real past questions in a timed environment.</p>
+                </div>
+
+                <!-- Customization Panel -->
+                <div id="cbtCustomizerCard" class="bg-white p-6 rounded-xl shadow-sm border border-gray-100 grid md:grid-cols-3 gap-6">
+                    <div class="md:col-span-2 space-y-4">
+                        <h4 class="font-bold text-gray-800 text-lg">Customize your CBT</h4>
+
+                        <!-- Subject Count Selector (Only visible for WAEC and NECO) -->
+                        <div id="subjectCountSelectorArea">
+                            <label class="block text-xs font-semibold text-gray-600 mb-1">Number of subjects to be tested on;</label>
+                            <select id="subjectCountSelect" onchange="generateSubjectDropdowns()" class="w-full p-2.5 border rounded-lg text-sm focus:ring-2 focus:ring-naijaGreen">
+                                <option value="4">4 Subjects</option>
+                                <option value="1">1 Subject</option>
+                                <option value="2">2 Subjects</option>
+                                <option value="3">3 Subjects</option>
+                                <option value="5">5 Subjects</option>
+                                <option value="6">6 Subjects</option>
+                                <option value="7">7 Subjects</option>
+                                <option value="8">8 Subjects</option>
+                                <option value="9">9 Subjects</option>
+                            </select>
+                        </div>
+
+                        <!-- Dynamic Subject List Container -->
+                        <div id="dynamicSubjectsContainer" class="space-y-3"></div>
+                    </div>
+
+                    <!-- Select Test Mode Cards -->
+                    <div class="space-y-4">
+                        <h4 class="font-bold text-gray-800 text-sm flex items-center">⏱️ Select Test mode</h4>
+                        
+                        <div id="btnPracticeMode" onclick="selectTestDuration(40)" class="p-4 border-2 border-naijaGreen bg-green-50 rounded-xl text-center cursor-pointer transition">
+                            <h3 class="text-3xl font-black text-naijaGreen">40</h3>
+                            <p class="text-xs text-gray-500 font-semibold mb-2">Minutes</p>
+                            <span class="bg-white text-naijaGreen px-3 py-1 rounded-md text-xs font-bold border">Practice Mode</span>
+                        </div>
+
+                        <div id="btnFullTestMode" onclick="selectTestDuration(120)" class="p-4 border-2 border-gray-200 bg-gray-50 rounded-xl text-center cursor-pointer transition">
+                            <h3 class="text-3xl font-black text-gray-700">120</h3>
+                            <p class="text-xs text-gray-500 font-semibold mb-2">Minutes</p>
+                            <span class="bg-white text-gray-700 px-3 py-1 rounded-md text-xs font-bold border">Full Test Mode</span>
+                        </div>
+
+                        <button onclick="startActiveExamSession()" class="w-full bg-naijaGreen text-white py-3 rounded-xl font-bold hover:bg-naijaGreen-dark transition shadow-md">Proceed to Exam</button>
+                    </div>
+                </div>
+
+                <!-- Active Exam Interface with Calm Green Palette -->
+                <div id="cbtActiveArea" class="hidden bg-white p-6 rounded-xl shadow border-2 border-naijaGreen">
+                    <div class="flex justify-between items-center mb-4 border-b pb-2">
+                        <span id="cbtTimer" class="text-xl font-black text-naijaGreen">Time Left: 40:00</span>
+                        <span class="text-xs bg-green-100 text-green-800 px-2.5 py-1 rounded font-bold">FOCUS MODE ACTIVE</span>
+                    </div>
+                    <div id="questionContainer" class="space-y-4"></div>
+                    <button onclick="submitExamManually()" class="mt-6 bg-naijaGreen text-white px-6 py-2 rounded-lg font-bold hover:bg-naijaGreen-dark transition">Submit Exam</button>
+                </div>
+            </div>
+
+        </main>
+    </div>
+
+    <!-- JavaScript Application Logic -->
+    <script>
+        const firebaseConfig = {
+            apiKey: "AIzaSyBccleW9TJfmp8bFChKwmIx-68pBrSUe-Y",
+            authDomain: "elsa-cbt.firebaseapp.com",
+            projectId: "elsa-cbt",
+            storageBucket: "elsa-cbt.firebasestorage.app",
+            messagingSenderId: "366734551874",
+            appId: "1:366734551874:web:5cf9df6268c85173cef6db",
+            measurementId: "G-D52762GFD4"
+        };
+        firebase.initializeApp(firebaseConfig);
+        const auth = firebase.auth();
+        const db = firebase.firestore();
+
+        // Locked Permitted Admin Emails
+        const PERMITTED_ADMINS = ["naeemahuthman1@gmail.com", "uthmanwasiudele@gmail.com"];
+        let currentSelectedExamType = "WAEC";
+        let chosenDurationMinutes = 40;
+        let timerInterval = null;
+
+        const NIGERIAN_SUBJECTS = [
+            "Mathematics", "Use of English", "Physics", "Chemistry", "Biology",
+            "Agricultural Science", "Economics", "Government", "Literature-in-English",
+            "Christian Religious Knowledge (CRK)", "Islamic Religious Knowledge (IRK)", "Geography",
+            "Financial Accounting", "Commerce", "Civic Education", "Computer Studies"
+        ];
+
+        // Auth observer
+        auth.onAuthStateChanged((user) => {
+            if (user) {
+                routeUserDashboard(user.uid);
+            } else {
+                showLoggedOutUI();
+            }
+        });
+
+        function routeUserDashboard(uid) {
+            db.collection('users').doc(uid).get().then((doc) => {
+                let username = "User";
+                let role = "student";
+
+                if (doc.exists) {
+                    const data = doc.data();
+                    username = data.username || "User";
+                    role = data.role || "student";
+                }
+
+                // Explicitly render Username and Capitalized Role
+                document.getElementById('userStatusBadge').innerText = `${username} (${role.toUpperCase()})`;
+                document.getElementById('logoutBtn').classList.remove('hidden');
+                document.getElementById('welcomeUserName').innerText = username;
+
+                document.getElementById('authSection').classList.add('hidden');
+                document.getElementById('appSidebar').classList.remove('hidden');
+
+                if (role === 'admin' || role === 'teacher') {
+                    document.getElementById('roleSpecificMenu').classList.remove('hidden');
+                } else {
+                    document.getElementById('roleSpecificMenu').classList.add('hidden');
+                }
+
+                showView('viewHome');
+            });
+        }
+
+        function launchExamMode(examType) {
+            currentSelectedExamType = examType;
+            showView('viewCBT');
+            document.getElementById('cbtActiveArea').classList.add('hidden');
+            document.getElementById('cbtCustomizerCard').classList.remove('hidden');
+            document.getElementById('cbtExamTitle').innerText = `${examType} CBT Simulator`;
+
+            const selectorArea = document.getElementById('subjectCountSelectorArea');
+            if (examType === 'JAMB') {
+                // JAMB is permanently locked to 4 subjects with English compulsory
+                selectorArea.classList.add('hidden');
+                generateJAMBSubjects();
+            } else {
+                // WAEC and NECO allow choosing number of subjects
+                selectorArea.classList.remove('hidden');
+                generateSubjectDropdowns();
+            }
+        }
+
+        function generateJAMBSubjects() {
+            const container = document.getElementById('dynamicSubjectsContainer');
+            container.innerHTML = `
+                <div class="p-3 bg-green-50 border border-green-200 rounded-lg text-sm font-semibold text-green-900">
+                    Subject 1: Use of English (Compulsory + Novel)
+                </div>
+            `;
+
+            for (let i = 2; i <= 4; i++) {
+                let options = `<option value="">-- Select Subject ${i} --</option>`;
+                NIGERIAN_SUBJECTS.filter(s => s !== "Use of English").forEach(sub => {
+                    options += `<option value="${sub}">${sub}</option>`;
+                });
+
+                container.innerHTML += `
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-500 mb-1">Subject ${i}</label>
+                        <select class="w-full p-2.5 border rounded-lg text-sm">${options}</select>
+                    </div>
+                `;
+            }
+        }
+
+        function generateSubjectDropdowns() {
+            const count = parseInt(document.getElementById('subjectCountSelect').value) || 4;
+            const container = document.getElementById('dynamicSubjectsContainer');
+            container.innerHTML = '';
+
+            for (let i = 1; i <= count; i++) {
+                let options = `<option value="">-- Select Subject ${i} --</option>`;
+                NIGERIAN_SUBJECTS.forEach(sub => {
+                    options += `<option value="${sub}">${sub}</option>`;
+                });
+
+                container.innerHTML += `
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-500 mb-1">Subject ${i}</label>
+                        <select class="w-full p-2.5 border rounded-lg text-sm">${options}</select>
+                    </div>
+                `;
+            }
+        }
+
+        function selectTestDuration(mins) {
+            chosenDurationMinutes = mins;
+            const pBtn = document.getElementById('btnPracticeMode');
+            const fBtn = document.getElementById('btnFullTestMode');
+
+            if (mins === 40) {
+                pBtn.className = "p-4 border-2 border-naijaGreen bg-green-50 rounded-xl text-center cursor-pointer transition";
+                fBtn.className = "p-4 border-2 border-gray-200 bg-gray-50 rounded-xl text-center cursor-pointer transition";
+            } else {
+                fBtn.className = "p-4 border-2 border-naijaGreen bg-green-50 rounded-xl text-center cursor-pointer transition";
+                pBtn.className = "p-4 border-2 border-gray-200 bg-gray-50 rounded-xl text-center cursor-pointer transition";
+            }
+        }
+
+        function startActiveExamSession() {
+            document.getElementById('cbtCustomizerCard').classList.add('hidden');
+            document.getElementById('cbtActiveArea').classList.remove('hidden');
+
+            document.getElementById('questionContainer').innerHTML = `
+                <div class="p-4 bg-gray-50 rounded-lg border">
+                    <p class="font-bold text-md mb-2">1. Solve the algebraic equation: $2x^2 + 5x - 3 = 0$</p>
+                    <div class="space-y-2 text-sm">
+                        <label class="block p-2 border rounded cursor-pointer hover:bg-white"><input type="radio" name="q1"> A. $x = 0.5$ or $x = -3$</label>
+                        <label class="block p-2 border rounded cursor-pointer hover:bg-white"><input type="radio" name="q1"> B. $x = -0.5$ or $x = 3$</label>
+                        <label class="block p-2 border rounded cursor-pointer hover:bg-white"><input type="radio" name="q1"> C. $x = 2$ or $x = 1$</label>
+                        <label class="block p-2 border rounded cursor-pointer hover:bg-white"><input type="radio" name="q1"> D. $x = 0$</label>
+                    </div>
+                </div>
+            `;
+
+            startTimer(chosenDurationMinutes * 60);
+        }
+
+        function startTimer(seconds) {
+            clearInterval(timerInterval);
+            let timeRemaining = seconds;
+
+            timerInterval = setInterval(() => {
+                let mins = Math.floor(timeRemaining / 60);
+                let secs = timeRemaining % 60;
+                document.getElementById('cbtTimer').innerText = `Time Left: ${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+
+                if (timeRemaining <= 0) {
+                    clearInterval(timerInterval);
+                    alert("⏰ Time is up! Your examination has been automatically submitted.");
+                    submitExamManually();
+                }
+                timeRemaining--;
+            }, 1000);
+        }
+
+        function submitExamManually() {
+            clearInterval(timerInterval);
+            document.getElementById('cbtActiveArea').classList.add('hidden');
+            document.getElementById('cbtCustomizerCard').classList.remove('hidden');
+            alert("Exam submitted successfully! Score: 85%");
+        }
+
+        function switchAdminTab(tab) {
+            document.getElementById('adminTabTeachers').classList.add('hidden');
+            document.getElementById('adminTabQuestions').classList.add('hidden');
+            document.getElementById('adminTabResults').classList.add('hidden');
+
+            if (tab === 'teachers') document.getElementById('adminTabTeachers').classList.remove('hidden');
+            if (tab === 'questions') document.getElementById('adminTabQuestions').classList.remove('hidden');
+            if (tab === 'results') document.getElementById('adminTabResults').classList.remove('hidden');
+        }
+
+        function assignTeacherClass() {
+            const email = document.getElementById('teacherEmailInput').value;
+            const className = document.getElementById('teacherClassInput').value;
+            if (email && className) {
+                alert(`Successfully assigned ${email} to class ${className}!`);
+            }
+        }
+
+        function showView(viewId) {
+            document.querySelectorAll('.dashboard-view').forEach(v => v.classList.add('hidden'));
+            document.getElementById(viewId).classList.remove('hidden');
+        }
+
+        function handleLogout() {
+            auth.signOut().then(() => showLoggedOutUI());
+        }
+
+        function showLoggedOutUI() {
+            document.getElementById('userStatusBadge').innerText = "Not Signed In";
+            document.getElementById('logoutBtn').classList.add('hidden');
+            document.getElementById('appSidebar').classList.add('hidden');
+            document.querySelectorAll('.dashboard-view').forEach(v => v.classList.add('hidden'));
+            document.getElementById('authSection').classList.remove('hidden');
+        }
+
+        function switchAuthTab(tab) {
+            if (tab === 'login') {
+                document.getElementById('loginForm').classList.remove('hidden');
+                document.getElementById('signupForm').classList.add('hidden');
+            } else {
+                document.getElementById('loginForm').classList.add('hidden');
+                document.getElementById('signupForm').classList.remove('hidden');
+            }
+        }
+
+        document.getElementById('loginForm').addEventListener('submit', (e) => {
+            e.preventDefault();
+            const email = document.getElementById('loginEmail').value;
+            const pass = document.getElementById('loginPassword').value;
+            auth.signInWithEmailAndPassword(email, pass).catch((err) => alert(err.message));
+        });
+
+        document.getElementById('signupForm').addEventListener('submit', (e) => {
+            e.preventDefault();
+            const email = document.getElementById('signupEmail').value.trim().toLowerCase();
+            const pass = document.getElementById('signupPassword').value;
+            const username = document.getElementById('signupUsername').value;
+            const role = document.getElementById('signupRole').value;
+
+            if (role === 'admin' && !PERMITTED_ADMINS.includes(email)) {
+                alert("Access Denied: Unrecognized email for Admin registration.");
+                return;
+            }
+
+            auth.createUserWithEmailAndPassword(email, pass)
+                .then((cred) => {
+                    return db.collection('users').doc(cred.user.uid).set({
+                        username: username,
+                        email: email,
+                        role: role,
+                        createdAt: new Date()
+                    });
+                })
+                .then(() => alert("Account created successfully!"))
+                .catch((err) => alert(err.message));
+        });
+    </script>
+</body>
+</html>
