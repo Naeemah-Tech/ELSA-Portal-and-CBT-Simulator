@@ -16,7 +16,7 @@
     <!-- html2pdf Library for PDF Profile Slip Export -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
 </head>
-<body>
+<body class="light-mode">
 
     <!-- Top Header -->
     <header class="header" id="mainHeader">
@@ -31,6 +31,9 @@
             </div>
         </div>
         <div class="header-right">
+            <button id="themeToggleBtn" onclick="toggleGlobalTheme()" class="theme-toggle-btn" title="Toggle Light/Dark Theme">
+                <i class="fa-solid fa-moon" id="themeIcon"></i> <span id="themeLabel">Dark Mode</span>
+            </button>
             <span id="userStatusBadge" class="status-badge">Ready</span>
             <button id="logoutBtn" onclick="handleLogout()" class="logout-btn hidden">Logout / Cancel</button>
         </div>
@@ -106,7 +109,7 @@
                         <small id="signupEmailWarning" class="gmail-warning hidden">⚠️ Please enter a valid @gmail.com address.</small>
                     </div>
                     <div class="form-group">
-                        <label>Password</label>
+                        <label>Create Password</label>
                         <input type="password" id="signupPassword" required placeholder="••••••••">
                     </div>
                     <div class="form-row">
@@ -142,7 +145,7 @@
                 </form>
             </section>
 
-            <!-- Home View -->
+            <!-- Home Dashboard View -->
             <div id="viewHome" class="dashboard-view hidden">
                 <div class="welcome-box" style="margin-bottom: 20px;">
                     <h2>Hello, <span id="welcomeUserName">User</span> 👋</h2>
@@ -151,24 +154,24 @@
 
                 <!-- Quick Stats Grid -->
                 <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; margin-bottom: 24px;">
-                    <div style="background: white; padding: 20px; border-radius: 10px; border-left: 5px solid var(--naija-green); box-shadow: 0 2px 4px rgba(0,0,0,0.03);">
-                        <span style="font-size: 0.75rem; font-weight: bold; color: #6b7280; text-transform: uppercase;">Total Students</span>
-                        <h3 id="statTotalStudents" style="font-size: 1.8rem; color: #111827; margin-top: 4px;">0</h3>
+                    <div class="stat-card" style="border-left: 5px solid var(--naija-green);">
+                        <span class="stat-title">Total Students</span>
+                        <h3 id="statTotalStudents" class="stat-number">0</h3>
                     </div>
-                    <div style="background: white; padding: 20px; border-radius: 10px; border-left: 5px solid #2563eb; box-shadow: 0 2px 4px rgba(0,0,0,0.03);">
-                        <span style="font-size: 0.75rem; font-weight: bold; color: #6b7280; text-transform: uppercase;">Total Teachers</span>
-                        <h3 id="statTotalTeachers" style="font-size: 1.8rem; color: #111827; margin-top: 4px;">0</h3>
+                    <div class="stat-card" style="border-left: 5px solid #2563eb;">
+                        <span class="stat-title">Total Teachers</span>
+                        <h3 id="statTotalTeachers" class="stat-number">0</h3>
                     </div>
-                    <div style="background: white; padding: 20px; border-radius: 10px; border-left: 5px solid #d97706; box-shadow: 0 2px 4px rgba(0,0,0,0.03);">
-                        <span style="font-size: 0.75rem; font-weight: bold; color: #6b7280; text-transform: uppercase;">Total Classes</span>
-                        <h3 id="statTotalClasses" style="font-size: 1.8rem; color: #111827; margin-top: 4px;">0</h3>
+                    <div class="stat-card" style="border-left: 5px solid #d97706;">
+                        <span class="stat-title">Total Classes</span>
+                        <h3 id="statTotalClasses" class="stat-number">0</h3>
                     </div>
                 </div>
 
                 <!-- Historical Performance Analytics -->
                 <div class="welcome-box" style="margin-top: 20px;">
                     <h3 style="margin-bottom: 12px; color: var(--naija-green);"><i class="fa-solid fa-chart-line"></i> Historical Performance Analytics</h3>
-                    <div style="height: 250px; position: relative;">
+                    <div style="height: 280px; position: relative;">
                         <canvas id="homeAnalyticsChart"></canvas>
                     </div>
                 </div>
@@ -178,9 +181,9 @@
             <div id="viewHistory" class="dashboard-view hidden">
                 <div class="welcome-box">
                     <h2 style="color: var(--naija-green); margin-bottom: 4px;"><i class="fa-solid fa-clock-rotate-left"></i> Exam Records & History</h2>
-                    <p style="color: #6b7280; margin-bottom: 20px;">Review all your past CBT sessions, scores, and detailed correction breakdowns.</p>
+                    <p style="color: var(--text-muted); margin-bottom: 20px;">Review all your past CBT sessions, scores, and detailed correction breakdowns.</p>
                     <div id="examHistoryListContainer" style="display: flex; flex-direction: column; gap: 12px;">
-                        <p style="color: #6b7280;">Loading exam history records...</p>
+                        <p style="color: var(--text-muted);">Loading exam history records...</p>
                     </div>
                 </div>
             </div>
@@ -189,13 +192,14 @@
             <div id="viewAdmin" class="dashboard-view hidden">
                 <div class="admin-panel">
                     <h2>👑 Admin Control Panel</h2>
-                    <p class="admin-subtitle">Manage school classes, teacher/student pre-registrations, and question banks.</p>
+                    <p class="admin-subtitle">Manage school classes, teacher/student pre-registrations, question banks, and video lessons.</p>
                     
                     <div class="admin-tabs-row">
                         <button onclick="switchAdminTab('classes')" id="adminTabBtnClasses" class="admin-tab-btn active">Classes</button>
                         <button onclick="switchAdminTab('teachers')" id="adminTabBtnTeachers" class="admin-tab-btn">Teachers</button>
                         <button onclick="switchAdminTab('students')" id="adminTabBtnStudents" class="admin-tab-btn">Students</button>
                         <button onclick="switchAdminTab('questions')" id="adminTabBtnQuestions" class="admin-tab-btn">Questions</button>
+                        <button onclick="switchAdminTab('videos')" id="adminTabBtnVideos" class="admin-tab-btn">Videos</button>
                         <button onclick="switchAdminTab('results')" id="adminTabBtnResults" class="admin-tab-btn">Results</button>
                     </div>
 
@@ -208,8 +212,8 @@
                         </div>
                         <div style="margin-top: 20px;">
                             <h4 id="classesCountHeader">All Created Classes & Rosters (0)</h4>
-                            <div id="classListContainer" style="margin-top: 10px; max-height: 350px; overflow-y: auto; background: #f9fafb; padding: 12px; border: 1px solid var(--border-color); border-radius: 8px;">
-                                <p style="color: #6b7280; font-size: 0.85rem;">Loading classes...</p>
+                            <div id="classListContainer" class="list-container">
+                                <p style="color: var(--text-muted); font-size: 0.85rem;">Loading classes...</p>
                             </div>
                         </div>
                     </div>
@@ -219,23 +223,23 @@
                         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; flex-wrap: wrap; gap: 8px;">
                             <h3>Teacher Pre-Registration & Bulk Upload</h3>
                             <div style="display: flex; align-items: center; gap: 8px;">
-                                <label style="font-size: 0.85rem; font-weight: bold; color: #4b5563;">Filter by Class:</label>
+                                <label style="font-size: 0.85rem; font-weight: bold;">Filter by Class:</label>
                                 <select id="filterTeacherClass" onchange="fetchTeachersList()" class="form-select" style="padding: 6px; font-size: 0.85rem; max-width: 180px;">
                                     <option value="ALL">All Classes</option>
                                 </select>
                             </div>
                         </div>
                         
-                        <div style="background: #f9fafb; padding: 16px; border-radius: 8px; border: 1px solid var(--border-color); margin-bottom: 20px;">
+                        <div class="admin-card-section">
                             <h4 style="margin-bottom: 10px; color: var(--naija-green);"><i class="fa-solid fa-file-csv"></i> Bulk Upload Teachers via CSV</h4>
                             <div class="form-row">
-                                <button onclick="downloadTeacherCSVTemplate()" class="admin-tab-btn" style="background: #e5e7eb; border-radius: 6px; padding: 8px; font-weight: bold;"><i class="fa-solid fa-download"></i> Download Teacher CSV Template</button>
+                                <button onclick="downloadTeacherCSVTemplate()" class="admin-tab-btn" style="background: var(--bg-gray); border-radius: 6px; padding: 8px; font-weight: bold;"><i class="fa-solid fa-download"></i> Download Teacher CSV Template</button>
                                 <input type="file" id="teacherCsvFileInput" accept=".csv" class="form-select">
                             </div>
                             <button onclick="parseTeacherCSV()" class="primary-btn" style="width: 100%; margin-top: 10px;">Upload & Pre-Register Teachers</button>
                         </div>
 
-                        <div style="background: #f9fafb; padding: 16px; border-radius: 8px; border: 1px solid var(--border-color); margin-bottom: 20px;">
+                        <div class="admin-card-section">
                             <h4 style="margin-bottom: 12px; color: var(--naija-green);"><i class="fa-solid fa-user-plus"></i> Pre-Register Single Teacher</h4>
                             <div class="teacher-prereg-grid">
                                 <div class="form-group">
@@ -274,11 +278,9 @@
                             <button onclick="preRegisterTeacher()" class="primary-btn" style="width: 100%; margin-top: 14px;">Pre-Register Teacher</button>
                         </div>
 
-                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-                            <h4 id="teachersCountHeader">All Registered Teachers (0)</h4>
-                        </div>
-                        <div id="teachersListContainer" style="margin-top: 10px; max-height: 300px; overflow-y: auto; background: #f9fafb; padding: 12px; border: 1px solid var(--border-color); border-radius: 8px;">
-                            <p style="color: #6b7280; font-size: 0.85rem;">Loading teachers...</p>
+                        <h4 id="teachersCountHeader">All Registered Teachers (0)</h4>
+                        <div id="teachersListContainer" class="list-container">
+                            <p style="color: var(--text-muted); font-size: 0.85rem;">Loading teachers...</p>
                         </div>
                     </div>
 
@@ -287,23 +289,23 @@
                         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; flex-wrap: wrap; gap: 8px;">
                             <h3>Student Registration & Bulk Upload</h3>
                             <div style="display: flex; align-items: center; gap: 8px;">
-                                <label style="font-size: 0.85rem; font-weight: bold; color: #4b5563;">Filter by Class:</label>
+                                <label style="font-size: 0.85rem; font-weight: bold;">Filter by Class:</label>
                                 <select id="filterStudentClass" onchange="fetchStudentsList()" class="form-select" style="padding: 6px; font-size: 0.85rem; max-width: 180px;">
                                     <option value="ALL">All Classes</option>
                                 </select>
                             </div>
                         </div>
                         
-                        <div style="background: #f9fafb; padding: 16px; border-radius: 8px; border: 1px solid var(--border-color); margin-bottom: 20px;">
+                        <div class="admin-card-section">
                             <h4 style="margin-bottom: 10px; color: var(--naija-green);"><i class="fa-solid fa-file-csv"></i> Bulk Upload Students via CSV</h4>
                             <div class="form-row">
-                                <button onclick="downloadStudentCSVTemplate()" class="admin-tab-btn" style="background: #e5e7eb; border-radius: 6px; padding: 8px; font-weight: bold;"><i class="fa-solid fa-download"></i> Download Student CSV Template</button>
+                                <button onclick="downloadStudentCSVTemplate()" class="admin-tab-btn" style="background: var(--bg-gray); border-radius: 6px; padding: 8px; font-weight: bold;"><i class="fa-solid fa-download"></i> Download Student CSV Template</button>
                                 <input type="file" id="studentCsvFileInput" accept=".csv" class="form-select">
                             </div>
                             <button onclick="parseStudentCSV()" class="primary-btn" style="width: 100%; margin-top: 10px;">Upload & Register Students</button>
                         </div>
 
-                        <div style="background: #f9fafb; padding: 16px; border-radius: 8px; border: 1px solid var(--border-color); margin-bottom: 20px;">
+                        <div class="admin-card-section">
                             <h4 style="margin-bottom: 10px; color: var(--naija-green);"><i class="fa-solid fa-user-plus"></i> Pre-Register Single Student</h4>
                             <div class="form-row" style="margin-bottom: 8px;">
                                 <input type="text" id="studentNameInput" placeholder="Student Full Name" class="form-select">
@@ -333,15 +335,15 @@
                         </div>
 
                         <h4 id="studentsCountHeader">All Registered Students (0)</h4>
-                        <div id="studentsListContainer" style="margin-top: 10px; max-height: 300px; overflow-y: auto; background: #f9fafb; padding: 12px; border: 1px solid var(--border-color); border-radius: 8px;">
-                            <p style="color: #6b7280; font-size: 0.85rem;">Loading students...</p>
+                        <div id="studentsListContainer" class="list-container">
+                            <p style="color: var(--text-muted); font-size: 0.85rem;">Loading students...</p>
                         </div>
                     </div>
 
                     <!-- Tab 4: Questions Manager -->
                     <div id="adminPanelQuestions" class="admin-tab-content hidden">
                         <h3>Add & Manage Question Bank</h3>
-                        <div style="background: #f9fafb; padding: 16px; border-radius: 8px; border: 1px solid var(--border-color); margin-bottom: 20px;">
+                        <div class="admin-card-section">
                             <h4 style="margin-bottom: 10px; color: var(--naija-green);"><i class="fa-solid fa-download"></i> Download Official Exam CSV Templates</h4>
                             <div style="display: flex; gap: 10px; flex-wrap: wrap;">
                                 <button onclick="downloadCSVTemplate('JAMB')" class="primary-btn" style="background: #2563eb;"><i class="fa-solid fa-file-csv"></i> JAMB Template</button>
@@ -350,7 +352,7 @@
                             </div>
                         </div>
 
-                        <div style="background: #f9fafb; padding: 16px; border-radius: 8px; border: 1px solid var(--border-color); margin-bottom: 20px;">
+                        <div class="admin-card-section">
                             <h4 style="margin-bottom: 10px; color: var(--naija-green);"><i class="fa-solid fa-plus"></i> Add Single Question Manually</h4>
                             <input type="hidden" id="editQuestionId" value="">
                             <div class="form-row" style="margin-bottom: 8px;">
@@ -364,6 +366,10 @@
                             </div>
                             <div class="form-group" style="margin-bottom: 8px;">
                                 <textarea id="singleQuestionText" placeholder="Type question text here..." class="form-select" rows="2" style="resize: vertical;"></textarea>
+                            </div>
+                            <div class="form-group" style="margin-bottom: 8px;">
+                                <label>Diagram / Question Image URL (Optional)</label>
+                                <input type="url" id="singleImageUrl" placeholder="https://example.com/diagram.png" class="form-select">
                             </div>
                             <div class="form-row" style="margin-bottom: 8px;">
                                 <input type="text" id="singleOptA" placeholder="Option A" class="form-select">
@@ -388,7 +394,7 @@
 
                         <div class="cbt-card" style="margin-bottom: 20px;">
                             <div>
-                                <label class="form-label">Bulk Upload Completed CSV File</label>
+                                <label class="form-label">Bulk Upload Completed CSV File (Supports image_url column)</label>
                                 <input type="file" id="csvFileInput" accept=".csv" class="form-select">
                             </div>
                             <div style="display: flex; align-items: flex-end;">
@@ -405,26 +411,54 @@
                                     <button onclick="fetchQuestionsForManagement('NECO')" class="admin-tab-btn" id="btnManageNECO">NECO</button>
                                 </div>
                             </div>
-                            <div id="questionBankList" style="max-height: 400px; overflow-y: auto; background: #f9fafb; border: 1px solid var(--border-color); border-radius: 8px; padding: 12px;">
-                                <p style="color: #6b7280; font-size: 0.85rem;">Select an exam track above to view, edit, publish/unpublish, or delete questions.</p>
+                            <div id="questionBankList" class="list-container" style="max-height: 400px;">
+                                <p style="color: var(--text-muted); font-size: 0.85rem;">Select an exam track above to view, edit, publish/unpublish, or delete questions.</p>
                             </div>
                         </div>
 
-                        <div style="margin-top: 30px; border: 2px dashed #dc2626; background: #fef2f2; padding: 16px; border-radius: 8px;">
-                            <h4 style="color: #991b1b; margin-bottom: 4px;"><i class="fa-solid fa-triangle-exclamation"></i> Danger Zone: Delete Entire Question Track</h4>
-                            <p style="font-size: 0.8rem; color: #7f1d1d; margin-bottom: 12px;">Permanently wipe all questions under the currently selected exam track.</p>
+                        <div style="margin-top: 30px; border: 2px dashed #dc2626; background: rgba(220, 38, 38, 0.05); padding: 16px; border-radius: 8px;">
+                            <h4 style="color: #dc2626; margin-bottom: 4px;"><i class="fa-solid fa-triangle-exclamation"></i> Danger Zone: Delete Entire Question Track</h4>
+                            <p style="font-size: 0.8rem; color: #dc2626; margin-bottom: 12px;">Permanently wipe all questions under the currently selected exam track.</p>
                             <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
-                                <input type="text" id="deleteConfirmationInput" placeholder="Type 'DELETE JAMB' to unlock" class="form-select" style="max-width: 300px; background: white;" oninput="checkDeleteConfirmation(this)">
+                                <input type="text" id="deleteConfirmationInput" placeholder="Type 'DELETE JAMB' to unlock" class="form-select" style="max-width: 300px;" oninput="checkDeleteConfirmation(this)">
                                 <button onclick="clearSelectedExamTrack()" id="dangerDeleteBtn" class="logout-btn" disabled style="background: #9ca3af; cursor: not-allowed;"><i class="fa-solid fa-trash"></i> Delete All Track Questions</button>
                             </div>
                         </div>
                     </div>
 
-                    <!-- Tab 5: Results -->
+                    <!-- Tab 5: Admin Video Manager -->
+                    <div id="adminPanelVideos" class="admin-tab-content hidden">
+                        <h3>📹 Manage Study Video Lessons</h3>
+                        <div class="admin-card-section" style="margin-top: 12px;">
+                            <h4 style="margin-bottom: 10px; color: var(--naija-green);"><i class="fa-solid fa-video"></i> Add Video Lesson</h4>
+                            <div class="form-row" style="margin-bottom: 8px;">
+                                <select id="videoSubject" class="form-select subject-dropdown"></select>
+                                <select id="videoExamType" class="form-select">
+                                    <option value="ALL">All Exams</option>
+                                    <option value="JAMB">JAMB</option>
+                                    <option value="WAEC">WAEC</option>
+                                    <option value="NECO">NECO</option>
+                                </select>
+                            </div>
+                            <div class="form-group" style="margin-bottom: 8px;">
+                                <input type="text" id="videoTitle" placeholder="Video Title (e.g. Optics & Light Waves Part 1)" class="form-select">
+                            </div>
+                            <div class="form-group" style="margin-bottom: 12px;">
+                                <input type="url" id="videoUrl" placeholder="YouTube Video URL or Embed Link" class="form-select">
+                            </div>
+                            <button onclick="saveAdminVideo()" class="primary-btn"><i class="fa-solid fa-upload"></i> Publish Video Lesson</button>
+                        </div>
+                        <h4 style="margin-top: 16px;">Uploaded Video Lessons</h4>
+                        <div id="adminVideoListContainer" class="list-container" style="max-height: 300px;">
+                            <p style="color: var(--text-muted); font-size: 0.85rem;">Loading videos...</p>
+                        </div>
+                    </div>
+
+                    <!-- Tab 6: Results -->
                     <div id="adminPanelResults" class="admin-tab-content hidden">
                         <h3>Student Examination Results Log</h3>
                         <div id="adminResultsLog" style="margin-top: 12px;">
-                            <p style="color: #6b7280; font-size: 0.9rem;">No student scores recorded yet.</p>
+                            <p style="color: var(--text-muted); font-size: 0.9rem;">No student scores recorded yet.</p>
                         </div>
                     </div>
                 </div>
@@ -440,15 +474,18 @@
                 <div id="cbtCustomizerCard" class="cbt-card">
                     <div class="cbt-options">
                         <div id="subjectCountSelectorArea">
-                            <label class="form-label">Number of subjects to be tested on;</label>
+                            <div style="display: flex; justify-content: space-between; align-items: center;">
+                                <label class="form-label">Number of subjects to be tested on:</label>
+                                <button onclick="clearSubjectSelection()" class="logout-btn" style="background: #6b7280; padding: 2px 8px; font-size: 0.75rem;">Clear Selection</button>
+                            </div>
                             <select id="subjectCountSelect" onchange="generateSubjectDropdowns()" class="form-select">
-                                <option value="4">4 Subjects (JAMB Standard)</option>
+                                <option value="4">4 Subjects</option>
                                 <option value="1">1 Subject</option>
                                 <option value="2">2 Subjects</option>
                                 <option value="3">3 Subjects</option>
                                 <option value="5">5 Subjects</option>
                                 <option value="6">6 Subjects</option>
-                                <option value="7">7 Subjects (WAEC/NECO)</option>
+                                <option value="7">7 Subjects</option>
                                 <option value="8">8 Subjects</option>
                                 <option value="9">9 Subjects</option>
                             </select>
@@ -460,11 +497,11 @@
                         <p class="form-label">⏱️ Select Test Mode / Duration</p>
                         <div id="btnPracticeMode" onclick="selectTestDuration(40)" class="mode-box">
                             <h3>40</h3>
-                            <span>Minutes (Practice: 20 Qs Eng + 10 Qs others, /200)</span>
+                            <span>Minutes Practice</span>
                         </div>
                         <div id="btnFullTestMode" onclick="selectTestDuration(120)" class="mode-box active-mode">
                             <h3>120</h3>
-                            <span>Minutes (Full UTME: 60 Qs Eng + 40 Qs others, /400)</span>
+                            <span>Minutes Standard</span>
                         </div>
                         <button id="proceedExamBtn" onclick="launchStandaloneExam()" class="primary-btn muted-btn" disabled style="opacity: 0.5; cursor: not-allowed;">Proceed to Exam</button>
                     </div>
@@ -474,62 +511,127 @@
             <!-- Study Hub View -->
             <div id="viewStudyHub" class="dashboard-view hidden">
                 <div class="cbt-banner" style="background: var(--naija-green-light); border-color: #bbf7d0;">
-                    <h3 id="studyHubTitle" style="color: var(--naija-green-dark);">📖 Study Past Questions Hub</h3>
-                    <p style="color: var(--naija-green-dark);">Review all available questions in the database with instant step-by-step explanations. No time limits!</p>
+                    <h3 id="studyHubTitle" style="color: var(--naija-green-dark);">📖 Study Past Questions & Video Hub</h3>
+                    <p style="color: var(--naija-green-dark);">Review available questions or watch subject video lessons!</p>
                 </div>
-                <div id="studyQuestionsContainer" style="display: flex; flex-direction: column; gap: 16px; margin-top: 16px;"></div>
+
+                <!-- Study Hub Toggle Tabs: Questions vs Videos -->
+                <div class="study-type-toggle">
+                    <button id="btnStudyTypeQuestions" onclick="switchStudyHubTab('questions')" class="study-type-btn active">Questions</button>
+                    <button id="btnStudyTypeVideos" onclick="switchStudyHubTab('videos')" class="study-type-btn">Videos</button>
+                </div>
+
+                <div id="studyQuestionsSection">
+                    <div id="studyQuestionsContainer" style="display: flex; flex-direction: column; gap: 16px; margin-top: 16px;"></div>
+                </div>
+
+                <div id="studyVideosSection" class="hidden">
+                    <div id="studyVideosContainer" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; margin-top: 16px;"></div>
+                </div>
+
                 <button onclick="showView('viewHome')" class="primary-btn" style="margin-top: 20px; background: #4b5563;"><i class="fa-solid fa-arrow-left"></i> Back to Dashboard</button>
             </div>
 
         </main>
     </div>
 
-    <!-- Standalone Fullscreen CBT Window Overlay -->
+    <!-- Standalone Fixed CBT Exam Screen (Matching Reference Palette Design) -->
     <div id="standaloneCbtWindow" class="standalone-cbt-overlay hidden">
-        <div class="exam-active-box" style="width: 100%; max-width: 1100px; margin: 20px auto; max-height: 95vh; overflow-y: auto;">
-            <div class="exam-top-bar">
+        <div class="cbt-exam-wrapper">
+            <!-- Top Exam Bar -->
+            <div class="cbt-exam-header">
                 <div style="display: flex; align-items: center; gap: 12px;">
                     <span class="brand-badge" id="standaloneExamBadge">JAMB CBT</span>
-                    <span id="cbtTimer" class="exam-timer">Time Left: 120:00</span>
+                    <span id="cbtSubjectTitle" style="font-weight: bold; font-size: 0.95rem;">Subject</span>
                 </div>
                 <div style="display: flex; align-items: center; gap: 10px;">
                     <button onclick="toggleCBTCalculator()" class="calc-icon-btn" title="Open Calculator"><i class="fa-solid fa-calculator"></i> Calculator</button>
-                    <span class="focus-badge">🛡️ ANTI-CHEAT ACTIVE</span>
-                    <button onclick="closeStandaloneCbtWindow()" class="logout-btn" style="padding: 4px 10px;" title="Exit Exam">&times; Exit</button>
+                    <div class="exam-timer" id="cbtTimer"><i class="fa-regular fa-clock"></i> 120:00</div>
+                    <button onclick="closeStandaloneCbtWindow()" class="logout-btn" style="padding: 4px 10px;">&times; Exit</button>
                 </div>
             </div>
 
-            <!-- Simple Calculator Popup Box -->
-            <div id="cbtCalculatorBox" class="calc-popup hidden">
-                <div class="calc-header">
-                    <span>Standard Calculator</span>
-                    <button onclick="toggleCBTCalculator()" style="background:none;border:none;color:white;cursor:pointer;font-weight:bold;">&times;</button>
-                </div>
-                <input type="text" id="calcScreen" readonly value="0">
-                <div class="calc-keypad">
-                    <button onclick="calcClear()">C</button>
-                    <button onclick="calcAppend('/')">/</button>
-                    <button onclick="calcAppend('*')">×</button>
-                    <button onclick="calcBack()">⌫</button>
-                    <button onclick="calcAppend('7')">7</button>
-                    <button onclick="calcAppend('8')">8</button>
-                    <button onclick="calcAppend('9')">9</button>
-                    <button onclick="calcAppend('-')">-</button>
-                    <button onclick="calcAppend('4')">4</button>
-                    <button onclick="calcAppend('5')">5</button>
-                    <button onclick="calcAppend('6')">6</button>
-                    <button onclick="calcAppend('+')">+</button>
-                    <button onclick="calcAppend('1')">1</button>
-                    <button onclick="calcAppend('2')">2</button>
-                    <button onclick="calcAppend('3')">3</button>
-                    <button onclick="calcCompute()" style="grid-row: span 2; background: var(--naija-green); color:white;">=</button>
-                    <button onclick="calcAppend('0')" style="grid-column: span 2;">0</button>
-                    <button onclick="calcAppend('.')">.</button>
-                </div>
-            </div>
+            <!-- Subject Tabs Header -->
+            <div id="cbtSubjectTabsHeader" class="cbt-subject-tabs"></div>
 
-            <div id="questionContainer"></div>
-            <button onclick="submitExamManually()" class="submit-btn">Submit Exam</button>
+            <!-- Main Question & Palette Layout -->
+            <div class="cbt-exam-grid">
+                <!-- Left Column: Question Area -->
+                <div class="cbt-question-card">
+                    <div class="cbt-q-header">
+                        <span id="cbtQuestionNumberLabel" style="font-weight: bold; color: var(--naija-green);">Question 1 of 40</span>
+                        <button id="flagQuestionBtn" onclick="toggleFlagCurrentQuestion()" class="flag-btn"><i class="fa-solid fa-flag"></i> Flag Question</button>
+                    </div>
+
+                    <div id="cbtQuestionBodyText" class="cbt-q-body">
+                        <!-- Question Text and Diagram Image -->
+                    </div>
+
+                    <div id="cbtOptionsContainer" class="cbt-options-list">
+                        <!-- Options A, B, C, D -->
+                    </div>
+
+                    <!-- Clean Bottom Left Metadata Badge -->
+                    <div class="cbt-q-footer">
+                        <div id="cbtCleanMetadataBadge" class="clean-metadata-tag">
+                            <i class="fa-solid fa-circle-info"></i> <span id="cleanMetaText">Year: 2026 | Question 1</span>
+                        </div>
+                    </div>
+
+                    <!-- Action Navigation Controls -->
+                    <div class="cbt-nav-controls">
+                        <button onclick="navigateCbtQuestion(-1)" id="btnPrevQ" class="cbt-nav-btn">&larr; Previous</button>
+                        <button onclick="clearCurrentSelection()" class="cbt-clear-btn">Clear Selection</button>
+                        <button onclick="navigateCbtQuestion(1)" id="btnNextQ" class="cbt-nav-btn primary">Next &rarr;</button>
+                    </div>
+                </div>
+
+                <!-- Right Column: Sidebar Question Palette -->
+                <aside class="cbt-palette-sidebar">
+                    <h4>Question Palette</h4>
+                    <div class="palette-legend">
+                        <span class="legend-item"><span class="box ans"></span> Ans</span>
+                        <span class="legend-item"><span class="box unans"></span> Unans</span>
+                        <span class="legend-item"><span class="box flag"></span> Flag</span>
+                        <span class="legend-item"><span class="box curr"></span> Curr</span>
+                    </div>
+
+                    <div id="cbtQuestionPaletteGrid" class="palette-grid">
+                        <!-- Number buttons 1..N -->
+                    </div>
+
+                    <button onclick="submitExamManually()" class="cbt-submit-exam-btn">Submit Test</button>
+                </aside>
+            </div>
+        </div>
+
+        <!-- Calculator Popup -->
+        <div id="cbtCalculatorBox" class="calc-popup hidden">
+            <div class="calc-header">
+                <span>Standard Calculator</span>
+                <button onclick="toggleCBTCalculator()" style="background:none;border:none;color:white;cursor:pointer;font-weight:bold;">&times;</button>
+            </div>
+            <input type="text" id="calcScreen" readonly value="0">
+            <div class="calc-keypad">
+                <button onclick="calcClear()">C</button>
+                <button onclick="calcAppend('/')">/</button>
+                <button onclick="calcAppend('*')">×</button>
+                <button onclick="calcBack()">⌫</button>
+                <button onclick="calcAppend('7')">7</button>
+                <button onclick="calcAppend('8')">8</button>
+                <button onclick="calcAppend('9')">9</button>
+                <button onclick="calcAppend('-')">-</button>
+                <button onclick="calcAppend('4')">4</button>
+                <button onclick="calcAppend('5')">5</button>
+                <button onclick="calcAppend('6')">6</button>
+                <button onclick="calcAppend('+')">+</button>
+                <button onclick="calcAppend('1')">1</button>
+                <button onclick="calcAppend('2')">2</button>
+                <button onclick="calcAppend('3')">3</button>
+                <button onclick="calcCompute()" style="grid-row: span 2; background: var(--naija-green); color:white;">=</button>
+                <button onclick="calcAppend('0')" style="grid-column: span 2;">0</button>
+                <button onclick="calcAppend('.')">.</button>
+            </div>
         </div>
     </div>
 
@@ -539,7 +641,7 @@
             <div style="border-bottom: 2px solid var(--naija-green-light); padding-bottom: 12px; margin-bottom: 16px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
                 <div>
                     <h2 style="color: var(--naija-green); font-size: 1.5rem; font-weight: bold;">📊 Examination Performance Slip</h2>
-                    <p style="color: #4b5563; font-size: 0.85rem;" id="resultsTimestamp"></p>
+                    <p style="color: var(--text-muted); font-size: 0.85rem;" id="resultsTimestamp"></p>
                 </div>
                 <span id="overallPercentageBadge" class="brand-badge" style="background: var(--naija-green); color: white; font-size: 1.25rem;">0%</span>
             </div>
@@ -549,21 +651,21 @@
                     <span style="font-size: 0.75rem; font-weight: bold; color: var(--naija-green-dark);" id="resScoreHeaderLabel">TOTAL SCORE</span>
                     <h3 id="resTotalScore" style="font-size: 1.5rem; color: var(--naija-green-dark); margin-top: 4px;">0 / 400</h3>
                 </div>
-                <div style="background: #fef2f2; padding: 12px; border-radius: 8px; text-align: center;">
-                    <span style="font-size: 0.75rem; font-weight: bold; color: #991b1b;">WEAKEST SUBJECT</span>
-                    <h3 id="resWeakSubject" style="font-size: 1.1rem; color: #991b1b; margin-top: 4px;">None</h3>
+                <div style="background: rgba(220, 38, 38, 0.1); padding: 12px; border-radius: 8px; text-align: center;">
+                    <span style="font-size: 0.75rem; font-weight: bold; color: #dc2626;">WEAKEST SUBJECT</span>
+                    <h3 id="resWeakSubject" style="font-size: 1.1rem; color: #dc2626; margin-top: 4px;">None</h3>
                 </div>
-                <div style="background: #eff6ff; padding: 12px; border-radius: 8px; text-align: center;">
-                    <span style="font-size: 0.75rem; font-weight: bold; color: #1e40af;">EXAM GRADE / STATUS</span>
-                    <h3 id="resGradeStatus" style="font-size: 1.1rem; color: #1e40af; margin-top: 4px;">DISTINCTION</h3>
+                <div style="background: rgba(37, 99, 235, 0.1); padding: 12px; border-radius: 8px; text-align: center;">
+                    <span style="font-size: 0.75rem; font-weight: bold; color: #2563eb;">EXAM GRADE / STATUS</span>
+                    <h3 id="resGradeStatus" style="font-size: 1.1rem; color: #2563eb; margin-top: 4px;">DISTINCTION</h3>
                 </div>
             </div>
 
-            <h4 style="margin-bottom: 8px; color: #374151;">Subject-by-Subject Breakdown & Grading</h4>
+            <h4 style="margin-bottom: 8px;">Subject-by-Subject Breakdown & Grading</h4>
             <div id="resSubjectBreakdownList" style="display: flex; flex-direction: column; gap: 8px; margin-bottom: 20px;"></div>
 
-            <h4 style="margin-bottom: 8px; color: #374151;">Detailed Answers & CBT Corrections Review</h4>
-            <div id="resDetailedReviewList" style="max-height: 350px; overflow-y: auto; background: #f9fafb; border: 1px solid var(--border-color); border-radius: 8px; padding: 12px; margin-bottom: 20px;"></div>
+            <h4 style="margin-bottom: 8px;">Detailed Answers & CBT Corrections Review</h4>
+            <div id="resDetailedReviewList" class="list-container" style="max-height: 350px; margin-bottom: 20px;"></div>
 
             <div style="display: flex; gap: 10px;">
                 <button onclick="closeStandaloneResultsWindow()" class="primary-btn" style="flex: 1;">Return to Dashboard</button>
@@ -604,7 +706,7 @@
             <div id="pdfProfileContent" class="pdf-slip-container">
                 <div class="pdf-header">
                     <h2 style="color: #008751; font-size: 1.1rem; font-weight: 900; margin-bottom: 2px;">EXCELLENT LEARNERS SOLUTION ACADEMY</h2>
-                    <p style="font-size: 0.75rem; color: #1f2937; font-weight: bold; text-transform: uppercase;">Official Identification & Profile Slip[cite: 8]</p>
+                    <p style="font-size: 0.75rem; color: #1f2937; font-weight: bold; text-transform: uppercase;">Official Identification & Profile Slip</p>
                 </div>
                 <div class="pdf-body-grid">
                     <div class="pdf-avatar-box">
@@ -700,13 +802,14 @@
     <div id="studyModal" class="modal-overlay hidden">
         <div class="modal-card" style="max-width: 500px;">
             <div class="modal-header">
-                <h3>🔍 Study Past Questions Hub</h3>
+                <h3>🔍 Study Past Questions & Videos</h3>
                 <button onclick="closeStudyModal()" class="close-modal">&times;</button>
             </div>
             <div style="margin-top: 16px; display: flex; flex-direction: column; gap: 12px;">
                 <div class="form-group">
                     <label>Examination Type</label>
                     <select id="studyExamTypeSelect" class="form-select" onchange="fetchStudyQuestionCount()">
+                        <option value="ALL">All Exams Past Questions</option>
                         <option value="JAMB">JAMB UTME</option>
                         <option value="WAEC">WAEC WASSCE</option>
                         <option value="NECO">NECO SSCE</option>
@@ -717,10 +820,10 @@
                     <select id="studySubjectSelect" class="form-select subject-dropdown" onchange="fetchStudyQuestionCount()"></select>
                 </div>
                 <div id="studyQuestionCountDisplay" style="background: var(--naija-green-light); border: 1px solid #bbf7d0; padding: 12px; border-radius: 8px; text-align: center; font-size: 0.9rem; font-weight: bold; color: var(--naija-green-dark);">
-                    Available Questions: Loading...
+                    Available Content: Select subject to view count.
                 </div>
             </div>
-            <button onclick="startStudySession()" class="primary-btn" style="width: 100%; margin-top: 16px;"><i class="fa-solid fa-play"></i> Start Study Session</button>
+            <button onclick="startStudySession()" class="primary-btn" style="width: 100%; margin-top: 16px;"><i class="fa-solid fa-play"></i> Open Study Hub</button>
         </div>
     </div>
 
