@@ -7,22 +7,33 @@ const firebaseConfig = {
     appId: "1:366734551874:web:5cf9df6268c85173cef6db",
     measurementId: "G-D52762GFD4"
 };
-firebase.initializeApp(firebaseConfig);
+
+if (!firebase.apps.length) {
+    firebase.initializeApp(firebaseConfig);
+}
 const auth = firebase.auth();
 const db = firebase.firestore();
+
+// Force Session Persistence
+auth.setPersistence(firebase.auth.Auth.Persistence.SESSION).catch(err => {
+    console.log("Persistence note:", err.message);
+});
 
 const PERMITTED_ADMINS = ["naeemahuthman1@gmail.com", "uthmanwasiudele@gmail.com"];
 let currentSelectedExamType = "JAMB";
 let chosenDurationMinutes = 120;
 let timerInterval = null;
 let currentExamQuestions = [];
+let currentQuestionIndex = 0;
+let userAnswers = {};
+let flaggedQuestions = {};
 let currentManagedTrack = "JAMB";
 let isExamActive = false;
+let homeChartInstance = null;
 let activeProfileData = null;
 let activeProfileId = null;
 let availableExamSubjects = [];
-let homeChartInstance = null;
-let resultsChartInstance = null;
+let examStartTime = null;
 
 const NIGERIAN_SUBJECTS = [
     "Mathematics", "Use of English", "Physics", "Chemistry", "Biology",
@@ -32,6 +43,12 @@ const NIGERIAN_SUBJECTS = [
 ];
 
 window.addEventListener('DOMContentLoaded', () => {
+    const savedTheme = localStorage.getItem('elsa_cbt_theme') || 'dark';
+    if (savedTheme === 'dark') {
+        document.body.classList.add('dark-mode');
+    }
+    updateThemeToggleUI(savedTheme);
+
     const dropdowns = document.querySelectorAll('.subject-dropdown');
     dropdowns.forEach(select => {
         select.innerHTML = '<option value="">-- Select Subject --</option>';
@@ -52,9 +69,30 @@ window.addEventListener('DOMContentLoaded', () => {
     });
 });
 
+function toggleGlobalTheme() {
+    document.body.classList.toggle('dark-mode');
+    const isDark = document.body.classList.contains('dark-mode');
+    localStorage.setItem('elsa_cbt_theme', isDark ? 'dark' : 'light');
+    updateThemeToggleUI(isDark ? 'dark' : 'light');
+}
+
+function updateThemeToggleUI(theme) {
+    const icon = document.getElementById('themeIcon');
+    const label = document.getElementById('themeLabel');
+    if (icon && label) {
+        if (theme === 'dark') {
+            icon.className = 'fa-solid fa-sun';
+            label.innerText = 'Light Mode';
+        } else {
+            icon.className = 'fa-solid fa-moon';
+            label.innerText = 'Dark Mode';
+        }
+    }
+}
+
 document.addEventListener("visibilitychange", function() {
     if (document.hidden && isExamActive) {
-        alert("⚠️ SECURITY WARNING: Tab switching or leaving the browser detected! Your exam has been automatically submitted.");
+        alert("⚠️ SECURITY WARNING: Tab switching detected! Your exam has been automatically submitted.");
         submitExamManually();
     }
 });
@@ -90,12 +128,9 @@ function validateGmailInput(inputEl) {
 function toggleSidebar() {
     const sidebar = document.getElementById('appSidebar');
     const overlay = document.getElementById('sidebarOverlay');
-    if (sidebar.classList.contains('hidden')) {
-        sidebar.classList.remove('hidden');
-        overlay.classList.remove('hidden');
-    } else {
-        sidebar.classList.add('hidden');
-        overlay.classList.add('hidden');
+    if (sidebar && overlay) {
+        sidebar.classList.toggle('hidden');
+        overlay.classList.toggle('hidden');
     }
 }
 
@@ -117,23 +152,21 @@ function switchAuthTab(tab) {
         signupForm.classList.add('hidden');
         loginTab.classList.add('active');
         signupTab.classList.remove('active');
-        indicator.className = "tab-indicator login-active";
+        if (indicator) indicator.className = "tab-indicator login-active";
     } else {
         loginForm.classList.add('hidden');
         signupForm.classList.remove('hidden');
         signupTab.classList.add('active');
         loginTab.classList.remove('active');
-        indicator.className = "tab-indicator signup-active";
+        if (indicator) indicator.className = "tab-indicator signup-active";
     }
 }
 
 function toggleSignupRoleFields() {
     const role = document.getElementById('signupRole').value;
     const titleGroup = document.getElementById('signupTeacherTitleGroup');
-    if (role === 'teacher') {
-        titleGroup.style.display = 'flex';
-    } else {
-        titleGroup.style.display = 'none';
+    if (titleGroup) {
+        titleGroup.style.display = (role === 'teacher') ? 'flex' : 'none';
     }
 }
 
@@ -156,10 +189,9 @@ function routeUserDashboard(uid) {
         document.getElementById('authSection').classList.add('hidden');
         document.getElementById('appSidebar').classList.remove('hidden');
 
-        if (role === 'admin' || role === 'teacher') {
-            document.getElementById('roleSpecificMenu').style.display = 'block';
-        } else {
-            document.getElementById('roleSpecificMenu').style.display = 'none';
+        const roleMenu = document.getElementById('roleSpecificMenu');
+        if (roleMenu) {
+            roleMenu.style.display = (role === 'admin' || role === 'teacher') ? 'block' : 'none';
         }
 
         updateDashboardCounters();
@@ -177,12 +209,20 @@ function updateDashboardCounters() {
             if (r === 'student') studentsCount++;
             if (r === 'teacher') teachersCount++;
         });
-        document.getElementById('statTotalStudents').innerText = studentsCount;
-        document.getElementById('statTotalTeachers').innerText = teachersCount;
+        const st = document.getElementById('statTotalStudents');
+        const tt = document.getElementById('statTotalTeachers');
+        if (st) st.innerText = studentsCount;
+        if (tt) tt.innerText = teachersCount;
     });
 
     db.collection('classes').get().then(snapshot => {
-        document.getElementById('statTotalClasses').innerText = snapshot.size;
+        const tc = document.getElementById('statTotalClasses');
+        if (tc) tc.innerText = snapshot.size;
+    });
+
+    db.collection('questions').get().then(snapshot => {
+        const tq = document.getElementById('statTotalQuestions');
+        if (tq) tq.innerText = snapshot.size;
     });
 }
 
@@ -215,24 +255,25 @@ function launchExamMode(examType) {
 
     if (examType === 'JAMB') {
         bannerTitle.innerText = "JAMB Unified Tertiary Matriculation Examination (UTME) Simulator";
-        bannerRules.innerText = "Computer-Based Test featuring Use of English (compulsory: 60 Qs) and 3 chosen academic subjects (40 Qs each). Timed under official JAMB standards.";
-        subjectSelectorArea.style.display = 'none';
-        modesContainer.style.display = 'flex';
+        bannerRules.innerText = "Computer-Based Test featuring Use of English (compulsory: 60 Qs) and 3 chosen academic subjects (40 Qs each).";
+        if (subjectSelectorArea) subjectSelectorArea.style.display = 'none';
+        if (modesContainer) modesContainer.style.display = 'flex';
         chosenDurationMinutes = 120;
         selectTestDuration(120);
         generateJAMBSubjects();
     } else {
-        // WAEC or NECO
         bannerTitle.innerText = `${examType} Senior School Certificate Examination Simulator`;
-        bannerRules.innerText = `Select your preferred subjects (50 questions per subject, exactly 1 hour per subject). Total time and question count adjust dynamically!`;
-        subjectSelectorArea.style.display = 'block';
-        modesContainer.style.display = 'flex';
-        document.getElementById('subjectCountSelect').value = "4";
+        bannerRules.innerText = `Select your preferred subjects (50 questions per subject, 1 hour per subject).`;
+        if (subjectSelectorArea) subjectSelectorArea.style.display = 'block';
+        if (modesContainer) modesContainer.style.display = 'flex';
+        const sc = document.getElementById('subjectCountSelect');
+        if (sc) sc.value = "4";
         generateSubjectDropdowns();
     }
 
     document.querySelectorAll('.nav-link').forEach(btn => btn.classList.remove('active-simulator'));
-    document.getElementById(`nav${examType}`).classList.add('active-simulator');
+    const navBtn = document.getElementById(`nav${examType}`);
+    if (navBtn) navBtn.classList.add('active-simulator');
 
     fetchAvailableSubjectsForExam(examType);
 }
@@ -240,7 +281,6 @@ function launchExamMode(examType) {
 function fetchAvailableSubjectsForExam(examType) {
     db.collection('questions')
       .where('examType', '==', examType)
-      .where('isPublished', '==', true)
       .get()
       .then(snapshot => {
           let subsSet = new Set();
@@ -253,6 +293,7 @@ function fetchAvailableSubjectsForExam(examType) {
 
 function generateJAMBSubjects() {
     const container = document.getElementById('dynamicSubjectsContainer');
+    if (!container) return;
     let options = `<option value="">-- Select Subject --</option>`;
     let subjectsToDisplay = availableExamSubjects.length > 0 ? availableExamSubjects.filter(s => s !== "Use of English") : NIGERIAN_SUBJECTS.filter(s => s !== "Use of English");
     
@@ -278,8 +319,10 @@ function generateJAMBSubjects() {
 }
 
 function generateSubjectDropdowns() {
-    const count = parseInt(document.getElementById('subjectCountSelect').value) || 4;
+    const countSelect = document.getElementById('subjectCountSelect');
+    const count = countSelect ? parseInt(countSelect.value) || 4 : 4;
     const container = document.getElementById('dynamicSubjectsContainer');
+    if (!container) return;
     container.innerHTML = '';
 
     let options = `<option value="">-- Select Subject --</option>`;
@@ -297,20 +340,18 @@ function generateSubjectDropdowns() {
         `;
     }
 
-    // Set duration for WAEC/NECO (1 hour per subject)
     chosenDurationMinutes = count * 60;
     
-    // Update the practice/duration mode info display dynamically
     const modeContainer = document.getElementById('cbtModesContainer');
-    modeContainer.innerHTML = `
-        <div style="background: var(--naija-green-light); border: 1px solid #bbf7d0; padding: 14px; border-radius: 8px; text-align: center; margin-bottom: 12px;">
-            <span style="font-size: 0.8rem; font-weight: bold; color: var(--naija-green-dark);">DYNAMIC EXAM DURATION & QUESTION COUNT</span>
-            <h3 style="color: var(--naija-green-dark); font-size: 1.3rem; margin-top: 4px;">${count} Subject${count > 1 ? 's' : ''} = ${count * 50} Total Questions</h3>
-            <span style="font-size: 0.85rem; color: #166534; font-weight: bold;">Total Time Allowed: ${chosenDurationMinutes} Minutes (${count} Hour${count > 1 ? 's' : ''})</span>
-        </div>
-        <button id="proceedExamBtn" onclick="launchStandaloneExam()" class="primary-btn muted-btn" disabled style="opacity: 0.5; cursor: not-allowed; width: 100%;">Proceed to Exam</button>
-    `;
-
+    if (modeContainer) {
+        modeContainer.innerHTML = `
+            <div style="background: var(--naija-green-light); border: 1px solid #bbf7d0; padding: 14px; border-radius: 8px; text-align: center; margin-bottom: 12px;">
+                <h3 style="color: var(--naija-green-dark); font-size: 1.3rem; margin-top: 4px;">${count} Subject${count > 1 ? 's' : ''} = ${count * 50} Total Questions</h3>
+                <span style="font-size: 0.85rem; color: #166534; font-weight: bold;">Total Time Allowed: ${chosenDurationMinutes} Minutes (${count} Hour${count > 1 ? 's' : ''})</span>
+            </div>
+            <button id="proceedExamBtn" onclick="launchStandaloneExam()" class="primary-btn muted-btn" disabled style="opacity: 0.5; cursor: not-allowed; width: 100%;">Proceed to Exam</button>
+        `;
+    }
     checkProceedExamButton();
 }
 
@@ -342,20 +383,21 @@ function checkProceedExamButton() {
         });
     }
 
-    if (allSelected) {
-        proceedBtn.disabled = false;
-        proceedBtn.classList.remove('muted-btn');
-        proceedBtn.style.opacity = '1';
-        proceedBtn.style.cursor = 'pointer';
-    } else {
-        proceedBtn.disabled = true;
-        proceedBtn.classList.add('muted-btn');
-        proceedBtn.style.opacity = '0.5';
-        proceedBtn.style.cursor = 'not-allowed';
+    if (proceedBtn) {
+        if (allSelected) {
+            proceedBtn.disabled = false;
+            proceedBtn.classList.remove('muted-btn');
+            proceedBtn.style.opacity = '1';
+            proceedBtn.style.cursor = 'pointer';
+        } else {
+            proceedBtn.disabled = true;
+            proceedBtn.classList.add('muted-btn');
+            proceedBtn.style.opacity = '0.5';
+            proceedBtn.style.cursor = 'not-allowed';
+        }
     }
 }
 
-// Fisher-Yates Random Shuffle for randomized question selection per session
 function shuffleArray(array) {
     for (let i = array.length - 1; i > 0; i--) {
         const j = Math.floor(Math.random() * (i + 1));
@@ -364,15 +406,15 @@ function shuffleArray(array) {
     return array;
 }
 
-// Launch Standalone Fullscreen CBT Window
 function launchStandaloneExam() {
     document.getElementById('cbtCustomizerCard').classList.add('hidden');
     document.getElementById('standaloneCbtWindow').classList.remove('hidden');
     document.getElementById('standaloneExamBadge').innerText = `${currentSelectedExamType} CBT`;
     isExamActive = true;
-    
-    const container = document.getElementById('questionContainer');
-    container.innerHTML = `<p style="text-align: center; color: var(--naija-green); font-weight: bold; padding: 20px;">Assembling randomized question paper for ${currentSelectedExamType}...</p>`;
+    userAnswers = {};
+    flaggedQuestions = {};
+    currentQuestionIndex = 0;
+    examStartTime = new Date();
 
     let selectedSubjects = [];
     if (currentSelectedExamType === 'JAMB') {
@@ -381,7 +423,6 @@ function launchStandaloneExam() {
             if(sel.value) selectedSubjects.push({ subject: sel.value, count: (chosenDurationMinutes === 40 ? 10 : 40) });
         });
     } else {
-        // WAEC / NECO (50 questions per subject)
         document.querySelectorAll('.subject-picker').forEach(sel => {
             if(sel.value) selectedSubjects.push({ subject: sel.value, count: 50 });
         });
@@ -390,17 +431,11 @@ function launchStandaloneExam() {
 
     db.collection('questions')
       .where('examType', '==', currentSelectedExamType)
-      .where('isPublished', '==', true)
       .get()
       .then((snapshot) => {
           if (snapshot.empty) {
-              container.innerHTML = `
-                  <div style="padding: 20px; text-align: center; color: #dc2626; font-weight: bold;">
-                      No published questions found in database for ${currentSelectedExamType}!<br>
-                      <span style="font-size: 0.85rem; color: #4b5563; font-weight: normal;">Please ensure questions are published in the Admin Control Panel.</span>
-                  </div>
-              `;
-              isExamActive = false;
+              alert(`No questions found in database for ${currentSelectedExamType}!`);
+              closeStandaloneCbtWindow();
               return;
           }
 
@@ -412,10 +447,9 @@ function launchStandaloneExam() {
           let assembledPaper = [];
           selectedSubjects.forEach(subObj => {
               let subPool = allDbQuestions.filter(q => q.subject === subObj.subject);
-              subPool = shuffleArray(subPool); // Random selection
+              subPool = shuffleArray(subPool);
               let sliced = subPool.slice(0, subObj.count);
               
-              // If database has fewer questions than required, fallback to duplicate/shuffle pool
               while(sliced.length < subObj.count && subPool.length > 0) {
                   let extra = subPool[Math.floor(Math.random() * subPool.length)];
                   sliced.push({ ...extra, id: extra.id + '_' + Math.random() });
@@ -424,39 +458,131 @@ function launchStandaloneExam() {
           });
 
           currentExamQuestions = shuffleArray(assembledPaper);
-
-          let questionsHTML = '';
-          currentExamQuestions.forEach((q, index) => {
-              questionsHTML += `
-                  <div style="padding: 16px; background: #f9fafb; border-radius: 8px; border: 1px solid var(--border-color); margin-bottom: 16px;">
-                      <p style="font-weight: bold; margin-bottom: 12px; color: #1f2937;">
-                          ${index + 1}. [${q.subject} - ${q.year}] ${q.questionText}
-                      </p>
-                      <div style="display: flex; flex-direction: column; gap: 8px; font-size: 0.9rem;">
-                          <label><input type="radio" name="q_${q.id}" value="A"> A. ${q.options.A}</label>
-                          <label><input type="radio" name="q_${q.id}" value="B"> B. ${q.options.B}</label>
-                          <label><input type="radio" name="q_${q.id}" value="C"> C. ${q.options.C}</label>
-                          <label><input type="radio" name="q_${q.id}" value="D"> D. ${q.options.D}</label>
-                      </div>
-                  </div>
-              `;
-          });
-
-          container.innerHTML = questionsHTML;
+          renderSubjectTabs(selectedSubjects);
+          renderQuestionPalette();
+          displayCurrentQuestion();
           startTimer(chosenDurationMinutes * 60);
       })
       .catch((err) => {
-          container.innerHTML = `<p style="color: red;">Error fetching questions: ${err.message}</p>`;
-          isExamActive = false;
+          alert("Error launching CBT: " + err.message);
+          closeStandaloneCbtWindow();
       });
 }
 
-function closeStandaloneCbtWindow() {
-    if (confirm("Are you sure you want to exit the CBT simulator? Your current test progress will be lost.")) {
-        clearInterval(timerInterval);
-        isExamActive = false;
-        document.getElementById('standaloneCbtWindow').classList.add('hidden');
-        launchExamMode(currentSelectedExamType);
+function renderSubjectTabs(subjects) {
+    const container = document.getElementById('cbtSubjectTabsHeader');
+    if (!container) return;
+    container.innerHTML = '';
+    subjects.forEach((subObj, idx) => {
+        container.innerHTML += `
+            <button onclick="jumpToSubject('${subObj.subject}')" class="cbt-subject-tab ${idx === 0 ? 'active' : ''}">${subObj.subject}</button>
+        `;
+    });
+}
+
+function displayCurrentQuestion() {
+    if (currentExamQuestions.length === 0) return;
+    const q = currentExamQuestions[currentQuestionIndex];
+
+    const numLabel = document.getElementById('cbtQuestionNumberLabel');
+    const bodyText = document.getElementById('cbtQuestionBodyText');
+    const metaText = document.getElementById('cleanMetaText');
+    const subjectTitle = document.getElementById('cbtSubjectTitle');
+
+    if (numLabel) numLabel.innerText = `Question ${currentQuestionIndex + 1} of ${currentExamQuestions.length}`;
+    if (subjectTitle) subjectTitle.innerText = q.subject;
+    if (metaText) metaText.innerText = `${q.examType || currentSelectedExamType} • Year: ${q.year || 2026} • Question #${currentQuestionIndex + 1}`;
+
+    let imgHtml = q.imageUrl ? `<div style="margin-bottom:12px;"><img src="${q.imageUrl}" style="max-width:100%; max-height:220px; border-radius:6px; border:1px solid var(--border-color);"></div>` : '';
+    if (bodyText) {
+        bodyText.innerHTML = `
+            <p style="margin-bottom: 12px; font-weight: 600;">${q.questionText}</p>
+            ${imgHtml}
+        `;
+    }
+
+    const optionsContainer = document.getElementById('cbtOptionsContainer');
+    if (optionsContainer) {
+        optionsContainer.innerHTML = '';
+        ['A', 'B', 'C', 'D'].forEach(optKey => {
+            if (q.options && q.options[optKey]) {
+                const isSelected = userAnswers[q.id] === optKey;
+                optionsContainer.innerHTML += `
+                    <div onclick="selectOption('${optKey}')" class="cbt-option-item ${isSelected ? 'selected' : ''}">
+                        <b>${optKey}.</b> ${q.options[optKey]}
+                    </div>
+                `;
+            }
+        });
+    }
+
+    const flagBtn = document.getElementById('flagQuestionBtn');
+    if (flagBtn) {
+        if (flaggedQuestions[q.id]) {
+            flagBtn.classList.add('flagged');
+            flagBtn.innerHTML = `<i class="fa-solid fa-flag"></i> Flagged`;
+        } else {
+            flagBtn.classList.remove('flagged');
+            flagBtn.innerHTML = `<i class="fa-solid fa-flag"></i> Flag Question`;
+        }
+    }
+
+    renderQuestionPalette();
+}
+
+function selectOption(optKey) {
+    const q = currentExamQuestions[currentQuestionIndex];
+    userAnswers[q.id] = optKey;
+    displayCurrentQuestion();
+}
+
+function clearCurrentSelection() {
+    const q = currentExamQuestions[currentQuestionIndex];
+    delete userAnswers[q.id];
+    displayCurrentQuestion();
+}
+
+function toggleFlagCurrentQuestion() {
+    const q = currentExamQuestions[currentQuestionIndex];
+    flaggedQuestions[q.id] = !flaggedQuestions[q.id];
+    displayCurrentQuestion();
+}
+
+function navigateCbtQuestion(step) {
+    const newIdx = currentQuestionIndex + step;
+    if (newIdx >= 0 && newIdx < currentExamQuestions.length) {
+        currentQuestionIndex = newIdx;
+        displayCurrentQuestion();
+    }
+}
+
+function renderQuestionPalette() {
+    const paletteGrid = document.getElementById('cbtQuestionPaletteGrid');
+    if (!paletteGrid) return;
+    paletteGrid.innerHTML = '';
+
+    currentExamQuestions.forEach((q, idx) => {
+        let statusClass = '';
+        if (userAnswers[q.id]) statusClass = 'answered';
+        if (flaggedQuestions[q.id]) statusClass = 'flagged';
+        if (idx === currentQuestionIndex) statusClass += ' current';
+
+        paletteGrid.innerHTML += `
+            <button onclick="jumpToQuestion(${idx})" class="palette-num-btn ${statusClass}">${idx + 1}</button>
+        `;
+    });
+}
+
+function jumpToQuestion(idx) {
+    currentQuestionIndex = idx;
+    displayCurrentQuestion();
+}
+
+function jumpToSubject(subjectName) {
+    const targetIdx = currentExamQuestions.findIndex(q => q.subject === subjectName);
+    if (targetIdx !== -1) {
+        currentQuestionIndex = targetIdx;
+        displayCurrentQuestion();
     }
 }
 
@@ -473,7 +599,8 @@ function startTimer(seconds) {
             ? `${hours}:${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`
             : `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
 
-        document.getElementById('cbtTimer').innerText = `Time Left: ${displayStr}`;
+        const timerEl = document.getElementById('cbtTimer');
+        if (timerEl) timerEl.innerHTML = `<i class="fa-regular fa-clock"></i> ${displayStr}`;
 
         if (timeRemaining <= 0) {
             clearInterval(timerInterval);
@@ -484,36 +611,49 @@ function startTimer(seconds) {
     }, 1000);
 }
 
-// Calculator Logic
-function toggleCBTCalculator() {
-    document.getElementById('cbtCalculatorBox').classList.toggle('hidden');
+function closeStandaloneCbtWindow() {
+    if (confirm("Are you sure you want to exit the CBT simulator? Progress will be lost.")) {
+        clearInterval(timerInterval);
+        isExamActive = false;
+        document.getElementById('standaloneCbtWindow').classList.add('hidden');
+        launchExamMode(currentSelectedExamType);
+    }
 }
-function calcClear() { document.getElementById('calcScreen').value = '0'; }
+
+// Enlarged Calculator
+function toggleCBTCalculator() {
+    const calcBox = document.getElementById('cbtCalculatorBox');
+    if (calcBox) calcBox.classList.toggle('hidden');
+}
+function calcClear() { const screen = document.getElementById('calcScreen'); if (screen) screen.value = '0'; }
 function calcAppend(val) {
     let screen = document.getElementById('calcScreen');
-    if (screen.value === '0' && val !== '.') screen.value = val;
-    else screen.value += val;
+    if (screen) {
+        if (screen.value === '0' && val !== '.') screen.value = val;
+        else screen.value += val;
+    }
 }
 function calcBack() {
     let screen = document.getElementById('calcScreen');
-    screen.value = screen.value.slice(0, -1) || '0';
+    if (screen) screen.value = screen.value.slice(0, -1) || '0';
 }
 function calcCompute() {
     let screen = document.getElementById('calcScreen');
-    try { screen.value = eval(screen.value.replace('×', '*')) || '0'; }
-    catch(e) { screen.value = 'Error'; }
+    if (screen) {
+        try { screen.value = eval(screen.value.replace('×', '*')) || '0'; }
+        catch(e) { screen.value = 'Error'; }
+    }
 }
 
-// WAEC / NECO Grade Mapping Function
 function getWaecNecoGrade(percentage) {
     if (percentage >= 75) return { grade: "A1", remark: "Excellent", status: "Distinction" };
     if (percentage >= 70) return { grade: "B2", remark: "Very Good", status: "Distinction" };
     if (percentage >= 65) return { grade: "B3", remark: "Good", status: "Distinction" };
     if (percentage >= 60) return { grade: "C4", remark: "Credit", status: "Credit" };
     if (percentage >= 55) return { grade: "C5", remark: "Credit", status: "Credit" };
-    if (percentage >= 50) return { grade: "C6", remark: "Credit", status: "Minimum Credit (Pass for entry)" };
-    if (percentage >= 45) return { grade: "D7", remark: "Pass", status: "Ordinary Pass (Not accepted as a credit)" };
-    if (percentage >= 40) return { grade: "E8", remark: "Pass / Weak Pass", status: "Ordinary Pass (Not accepted as a credit)" };
+    if (percentage >= 50) return { grade: "C6", remark: "Credit", status: "Minimum Credit" };
+    if (percentage >= 45) return { grade: "D7", remark: "Pass", status: "Ordinary Pass" };
+    if (percentage >= 40) return { grade: "E8", remark: "Pass", status: "Ordinary Pass" };
     return { grade: "F9", remark: "Fail", status: "Outright Fail" };
 }
 
@@ -528,14 +668,14 @@ function submitExamManually() {
     let subjectStats = {};
     let reviewHTML = '';
 
+    let timeUsedSecs = examStartTime ? Math.round((new Date() - examStartTime) / 1000) : 0;
+    let timeUsedStr = `${Math.floor(timeUsedSecs / 60)} mins ${timeUsedSecs % 60} secs`;
+
     currentExamQuestions.forEach((q, idx) => {
-        const selectedOption = document.querySelector(`input[name="q_${q.id}"]:checked`);
-        const userChoice = selectedOption ? selectedOption.value : "NONE";
+        const userChoice = userAnswers[q.id] || "NONE";
         const isCorrect = userChoice === q.correctOption;
 
-        if (!subjectStats[q.subject]) {
-            subjectStats[q.subject] = { total: 0, correct: 0 };
-        }
+        if (!subjectStats[q.subject]) subjectStats[q.subject] = { total: 0, correct: 0 };
         subjectStats[q.subject].total += 1;
 
         if (isCorrect) {
@@ -548,22 +688,17 @@ function submitExamManually() {
                 <p style="font-weight: bold; color: ${isCorrect ? 'var(--naija-green)' : '#dc2626'};">
                     ${idx + 1}. [${q.subject}] ${q.questionText} (${isCorrect ? 'Correct ✓' : 'Incorrect ✗'})
                 </p>
-                <p style="color: #4b5563; margin-top: 2px;">
-                    Your Answer: <b>${userChoice}</b> | Correct Answer: <b style="color: var(--naija-green);">${q.correctOption}</b>
-                </p>
-                <p style="color: #6b7280; font-size: 0.8rem; font-style: italic; margin-top: 4px;">
-                    💡 Explanation: ${q.explanation || 'No explanation provided.'}
-                </p>
+                <p style="margin-top: 2px;">Your Answer: <b>${userChoice}</b> | Correct Answer: <b style="color: var(--naija-green);">${q.correctOption}</b></p>
+                <p style="font-size: 0.8rem; font-style: italic; margin-top: 4px;">💡 Explanation: ${q.explanation || 'No explanation provided.'}</p>
             </div>
         `;
     });
 
     let percentage = Math.round((totalCorrect / (totalQuestions || 1)) * 100);
     document.getElementById('overallPercentageBadge').innerText = `${percentage}%`;
-    document.getElementById('resultsTimestamp').innerText = `Completed on ${new Date().toLocaleString()}`;
+    document.getElementById('resultsTimestamp').innerText = `Completed in ${timeUsedStr} on ${new Date().toLocaleString()}`;
 
     let finalScaledScore = 0;
-    let scoreHeaderLabel = "TOTAL SCORE";
     let gradeStatusText = "";
 
     if (currentSelectedExamType === 'JAMB') {
@@ -601,22 +736,18 @@ function submitExamManually() {
         }
 
         breakdownHTML += `
-            <div style="display: flex; justify-content: space-between; align-items: center; background: #f9fafb; padding: 8px 12px; border-radius: 6px; font-size: 0.85rem; flex-wrap: wrap; gap: 4px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; background: var(--bg-gray); padding: 8px 12px; border-radius: 6px; font-size: 0.85rem; margin-bottom: 4px;">
                 <span><b>${sub}</b> (${subCorrect}/${subTotal})${subExtraInfo}</span>
                 <span style="font-weight: bold; color: ${subAcc >= 50 ? 'var(--naija-green)' : '#dc2626'};">${subAcc}%</span>
             </div>
         `;
     }
 
-    if (lowestPercentage === 100 || Object.keys(subjectStats).length === 0) {
-        weakestSub = "None";
-    }
-
     document.getElementById('resWeakSubject').innerText = weakestSub === "None" ? "None" : `${weakestSub} (${lowestPercentage}%)`;
     document.getElementById('resSubjectBreakdownList').innerHTML = breakdownHTML;
     document.getElementById('resDetailedReviewList').innerHTML = reviewHTML;
 
-    saveExamResultToFirestore(currentSelectedExamType, percentage, totalCorrect, totalQuestions, finalScaledScore, subjectStats);
+    saveExamResultToFirestore(currentSelectedExamType, percentage, totalCorrect, totalQuestions, finalScaledScore, subjectStats, timeUsedStr);
 }
 
 function closeStandaloneResultsWindow() {
@@ -624,7 +755,7 @@ function closeStandaloneResultsWindow() {
     showView('viewHome');
 }
 
-function saveExamResultToFirestore(examType, percentage, score, total, scaledScore, subjectStats) {
+function saveExamResultToFirestore(examType, percentage, score, total, scaledScore, subjectStats, timeUsedStr) {
     if (!auth.currentUser) return;
     const uid = auth.currentUser.uid;
 
@@ -636,48 +767,93 @@ function saveExamResultToFirestore(examType, percentage, score, total, scaledSco
         total: total,
         scaledScore: scaledScore,
         subjectStats: subjectStats,
+        timeUsed: timeUsedStr,
         timestamp: new Date()
     }).then(() => {
         renderHomeAnalyticsChart(uid);
     });
 }
 
-// Exam Records & History View
+// Grouped Exam History & Profile Viewer
 function showExamHistoryView() {
     showView('viewHistory');
     const container = document.getElementById('examHistoryListContainer');
-    container.innerHTML = `<p style="color: #6b7280;">Loading exam records...</p>`;
+    if (!container) return;
+    container.innerHTML = `<p style="color: var(--text-muted);">Loading exam records & student history...</p>`;
 
     if (!auth.currentUser) return;
-    const uid = auth.currentUser.uid;
 
-    db.collection('exam_results')
-      .where('userId', '==', uid)
-      .orderBy('timestamp', 'desc')
-      .get()
-      .then(snapshot => {
-          if (snapshot.empty) {
-              container.innerHTML = `<p style="color: #6b7280;">No past exam sessions recorded yet. Take a CBT simulator test to populate your history!</p>`;
-              return;
-          }
+    db.collection('users').orderBy('username', 'asc').get().then(userSnap => {
+        db.collection('exam_results').orderBy('timestamp', 'desc').get().then(resSnap => {
+            let resultsMap = {};
+            resSnap.forEach(doc => {
+                let r = doc.data();
+                if (!resultsMap[r.userId]) resultsMap[r.userId] = [];
+                resultsMap[r.userId].push(r);
+            });
 
-          let html = '';
-          snapshot.forEach(doc => {
-              let res = doc.data();
-              let dateStr = res.timestamp ? new Date(res.timestamp.toDate()).toLocaleString() : 'Recent';
-              html += `
-                  <div style="background: #f9fafb; padding: 16px; border-radius: 8px; border: 1px solid var(--border-color); display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
-                      <div>
-                          <h4 style="color: var(--naija-green); margin-bottom: 2px;">${res.examType} Examination Session</h4>
-                          <p style="font-size: 0.8rem; color: #4b5563;">Completed on: ${dateStr}</p>
-                          <p style="font-size: 0.85rem; font-weight: bold; margin-top: 4px;">Score: ${res.score} / ${res.total} (${res.percentage}%)</p>
-                      </div>
-                      <span class="brand-badge" style="background: var(--naija-green-light); color: var(--naija-green-dark);">${res.percentage}% Success</span>
-                  </div>
-              `;
-          });
-          container.innerHTML = html;
-      });
+            if (userSnap.empty) {
+                container.innerHTML = `<p style="color: var(--text-muted);">No users found.</p>`;
+                return;
+            }
+
+            let html = `
+                <div style="margin-bottom: 16px;">
+                    <h4 style="color: var(--naija-green); margin-bottom: 4px;"><i class="fa-solid fa-graduation-cap"></i> Student Examination History & Performance</h4>
+                    <p style="font-size: 0.8rem; color: var(--text-muted);">Grouped user records with exam logs, time used, and performance corrections.</p>
+                </div>
+                <div style="display: flex; flex-direction: column; gap: 12px; max-height: 550px; overflow-y: auto;">
+            `;
+
+            userSnap.forEach(doc => {
+                let u = doc.data();
+                let uId = doc.id;
+                let userExams = resultsMap[uId] || [];
+                let passportPreview = u.passportUrl 
+                    ? `<img src="${u.passportUrl}" style="width: 44px; height: 44px; border-radius: 50%; object-fit: cover; border: 2px solid var(--naija-green);">` 
+                    : `<div style="width: 44px; height: 44px; background: var(--naija-green-light); color: var(--naija-green); border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: bold;"><i class="fa-solid fa-user"></i></div>`;
+
+                let examsListHtml = '';
+                if (userExams.length === 0) {
+                    examsListHtml = `<p style="font-size: 0.75rem; color: var(--text-muted); font-style: italic; margin-top: 4px;">No past exam sessions recorded.</p>`;
+                } else {
+                    userExams.forEach(ex => {
+                        let dateStr = ex.timestamp ? new Date(ex.timestamp.toDate()).toLocaleString() : 'Recent';
+                        examsListHtml += `
+                            <div style="background: var(--bg-gray); padding: 8px 10px; border-radius: 6px; margin-top: 4px; display: flex; justify-content: space-between; align-items: center; font-size: 0.8rem;">
+                                <div>
+                                    <b>${ex.examType}</b> • Score: <b>${ex.score} / ${ex.total} (${ex.percentage}%)</b>
+                                    <br><span style="font-size: 0.7rem; color: var(--text-muted);">Time Used: ${ex.timeUsed || 'N/A'} | ${dateStr}</span>
+                                </div>
+                                <span style="font-weight: bold; color: ${ex.percentage >= 50 ? 'var(--naija-green)' : '#dc2626'};">${ex.percentage}%</span>
+                            </div>
+                        `;
+                    });
+                }
+
+                html += `
+                    <div style="background: var(--card-bg); padding: 14px; border-radius: 8px; border: 1px solid var(--border-color);">
+                        <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; margin-bottom: 8px;">
+                            <div style="display: flex; align-items: center; gap: 12px;">
+                                ${passportPreview}
+                                <div>
+                                    <h4 style="font-size: 0.95rem; color: var(--text-color); margin-bottom: 2px;">${u.teacherTitle ? u.teacherTitle + ' ' : ''}${u.username} (${u.role.toUpperCase()})</h4>
+                                    <p style="font-size: 0.75rem; color: var(--text-muted);">Class: <b>${u.assignedClass || 'None'}</b> | Email: <b>${u.email}</b> | Phone: <b>${u.phone || 'N/A'}</b></p>
+                                </div>
+                            </div>
+                            <button onclick="openProfileModal('${uId}')" class="primary-btn" style="padding: 6px 12px; font-size: 0.8rem;"><i class="fa-solid fa-address-card"></i> View Full Profile</button>
+                        </div>
+                        <div style="border-top: 1px solid var(--border-color); padding-top: 8px;">
+                            <b style="font-size: 0.8rem; color: var(--naija-green);">Exam Sessions & History (${userExams.length}):</b>
+                            ${examsListHtml}
+                        </div>
+                    </div>
+                `;
+            });
+            html += `</div>`;
+            container.innerHTML = html;
+        });
+    });
 }
 
 function renderHomeAnalyticsChart(uid) {
@@ -701,7 +877,9 @@ function renderHomeAnalyticsChart(uid) {
               dataPoints = [0];
           }
 
-          const ctx = document.getElementById('homeAnalyticsChart').getContext('2d');
+          const canvas = document.getElementById('homeAnalyticsChart');
+          if (!canvas) return;
+          const ctx = canvas.getContext('2d');
           if (homeChartInstance) homeChartInstance.destroy();
 
           homeChartInstance = new Chart(ctx, {
@@ -726,9 +904,9 @@ function renderHomeAnalyticsChart(uid) {
       });
 }
 
-/* Admin Tab Switching */
+// Admin Tab Switching & Management
 function switchAdminTab(tab) {
-    const panels = ['Classes', 'Teachers', 'Students', 'Questions', 'Results'];
+    const panels = ['Classes', 'Teachers', 'Students', 'Users', 'Questions', 'Videos', 'Results'];
     panels.forEach(p => {
         const panelEl = document.getElementById(`adminPanel${p}`);
         const btnEl = document.getElementById(`adminTabBtn${p}`);
@@ -744,50 +922,110 @@ function switchAdminTab(tab) {
     if (activeBtn) activeBtn.classList.add('active');
 
     if (tab === 'classes') fetchClassesList();
-    if (tab === 'teachers') {
-        populateClassDropdowns();
-        fetchTeachersList();
-    }
-    if (tab === 'students') {
-        populateClassDropdowns();
-        fetchStudentsList();
-    }
+    if (tab === 'teachers') { populateClassDropdowns(); fetchTeachersList(); }
+    if (tab === 'students') { populateClassDropdowns(); fetchStudentsList(); }
+    if (tab === 'users') fetchAllUsersList('ALL');
     if (tab === 'questions') fetchQuestionsForManagement('JAMB');
-    if (tab === 'results') fetchAdminResultsLog();
+    if (tab === 'videos') fetchAdminVideos();
+    if (tab === 'results') { populateClassDropdowns(); fetchAdminResultsLog(); }
+}
+
+function fetchAllUsersList(filterType) {
+    const container = document.getElementById('allUsersListContainer');
+    if (!container) return;
+    container.innerHTML = `<p style="color: var(--text-muted); font-size: 0.85rem;">Loading users directory...</p>`;
+
+    db.collection('users').orderBy('username', 'asc').get().then(snapshot => {
+        if (snapshot.empty) {
+            container.innerHTML = `<p style="color: var(--text-muted); font-size: 0.85rem;">No users registered.</p>`;
+            return;
+        }
+
+        let html = '';
+        snapshot.forEach(doc => {
+            let u = doc.data();
+            let isActive = u.isRegisteredByAdmin || u.role === 'admin';
+            
+            if (filterType === 'active' && !isActive) return;
+            if (filterType === 'inactive' && isActive) return;
+
+            html += `
+                <div style="background: var(--card-bg); padding: 10px 14px; border-radius: 6px; margin-bottom: 6px; border: 1px solid var(--border-color); display: flex; justify-content: space-between; align-items: center; font-size: 0.85rem; flex-wrap: wrap; gap: 8px;">
+                    <div>
+                        <b>${u.username}</b> (${u.email}) | Role: <b>${u.role.toUpperCase()}</b> | Class: <b>${u.assignedClass || 'None'}</b>
+                    </div>
+                    <span style="font-size: 0.75rem; padding: 2px 8px; border-radius: 4px; background: ${isActive ? 'var(--naija-green-light)' : '#fee2e2'}; color: ${isActive ? 'var(--naija-green-dark)' : '#dc2626'}; font-weight: bold;">
+                        ${isActive ? 'Active' : 'Inactive'}
+                    </span>
+                </div>
+            `;
+        });
+        container.innerHTML = html || `<p style="color: var(--text-muted); font-size: 0.85rem;">No users match this filter.</p>`;
+    });
 }
 
 function fetchAdminResultsLog() {
     const container = document.getElementById('adminResultsLog');
-    container.innerHTML = `<p style="color: #6b7280; font-size: 0.85rem;">Loading student scores log...</p>`;
+    const classFilter = document.getElementById('filterResultClass') ? document.getElementById('filterResultClass').value : 'ALL';
+    if (!container) return;
+    container.innerHTML = `<p style="color: var(--text-muted); font-size: 0.85rem;">Loading student results log...</p>`;
 
-    db.collection('exam_results').orderBy('timestamp', 'desc').get().then(snapshot => {
-        if (snapshot.empty) {
-            container.innerHTML = `<p style="color: #6b7280; font-size: 0.9rem;">No student scores recorded yet.</p>`;
-            return;
-        }
+    db.collection('users').orderBy('username', 'asc').get().then(userSnap => {
+        let userMap = {};
+        userSnap.forEach(doc => { userMap[doc.id] = doc.data(); });
 
-        let html = `<div style="display: flex; flex-direction: column; gap: 8px; max-height: 350px; overflow-y: auto;">`;
-        snapshot.forEach(doc => {
-            let res = doc.data();
-            html += `
-                <div style="background: #f9fafb; padding: 10px 14px; border-radius: 6px; border: 1px solid var(--border-color); display: flex; justify-content: space-between; align-items: center; font-size: 0.85rem; flex-wrap: wrap; gap: 6px;">
-                    <div>
-                        <b>Exam:</b> ${res.examType} | <b>Score:</b> ${res.score} / ${res.total}
+        db.collection('exam_results').orderBy('timestamp', 'desc').get().then(snapshot => {
+            if (snapshot.empty) {
+                container.innerHTML = `<p style="color: var(--text-muted); font-size: 0.9rem;">No student scores recorded yet.</p>`;
+                return;
+            }
+
+            let resultsArray = [];
+            snapshot.forEach(doc => {
+                let res = doc.data();
+                let userObj = userMap[res.userId] || { username: "Unknown User", email: "", assignedClass: "Unassigned", passportUrl: "" };
+                resultsArray.push({ id: doc.id, ...res, user: userObj });
+            });
+
+            resultsArray.sort((a, b) => a.user.username.localeCompare(b.user.username));
+
+            let html = `<div style="display: flex; flex-direction: column; gap: 8px; max-height: 450px; overflow-y: auto;">`;
+            let filteredCount = 0;
+
+            resultsArray.forEach(res => {
+                let assignedClass = res.user.assignedClass || 'None';
+                if (classFilter !== 'ALL' && assignedClass !== classFilter) return;
+
+                filteredCount++;
+                let passportPreview = res.user.passportUrl 
+                    ? `<img src="${res.user.passportUrl}" style="width: 32px; height: 32px; border-radius: 50%; object-fit: cover; border: 1px solid var(--naija-green);">` 
+                    : `<div style="width: 32px; height: 32px; background: var(--naija-green-light); color: var(--naija-green); border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 0.8rem;"><i class="fa-solid fa-user"></i></div>`;
+
+                html += `
+                    <div style="background: var(--card-bg); padding: 10px 14px; border-radius: 6px; border: 1px solid var(--border-color); display: flex; justify-content: space-between; align-items: center; font-size: 0.85rem; flex-wrap: wrap; gap: 8px;">
+                        <div style="display: flex; align-items: center; gap: 10px;">
+                            ${passportPreview}
+                            <div>
+                                <b>${res.user.username}</b> (${assignedClass})<br>
+                                <span style="font-size: 0.75rem; color: var(--text-muted);">Exam: ${res.examType} | Score: <b>${res.score} / ${res.total}</b></span>
+                            </div>
+                        </div>
+                        <div style="display: flex; align-items: center; gap: 10px;">
+                            <span style="font-weight: bold; color: ${res.percentage >= 50 ? 'var(--naija-green)' : '#dc2626'};">${res.percentage}%</span>
+                            <button onclick="openProfileModal('${res.userId}')" class="primary-btn" style="padding: 4px 8px; font-size: 0.75rem;"><i class="fa-solid fa-eye"></i> View Profile</button>
+                        </div>
                     </div>
-                    <div>
-                        <span style="font-weight: bold; color: ${res.percentage >= 50 ? 'var(--naija-green)' : '#dc2626'};">${res.percentage}%</span>
-                        <span style="color: #6b7280; font-size: 0.75rem; margin-left: 10px;">${res.timestamp ? new Date(res.timestamp.toDate()).toLocaleString() : ''}</span>
-                    </div>
-                </div>
-            `;
+                `;
+            });
+            html += `</div>`;
+            container.innerHTML = filteredCount > 0 ? html : `<p style="color: var(--text-muted); font-size: 0.85rem;">No results found for this class filter.</p>`;
         });
-        html += `</div>`;
-        container.innerHTML = html;
     });
 }
 
 function createNewClass() {
-    const className = document.getElementById('newClassNameInput').value.trim();
+    const classNameInput = document.getElementById('newClassNameInput');
+    const className = classNameInput ? classNameInput.value.trim() : '';
     if (!className) {
         alert("Please enter a class name.");
         return;
@@ -798,7 +1036,7 @@ function createNewClass() {
         createdAt: new Date()
     }).then(() => {
         alert(`Class "${className}" created successfully!`);
-        document.getElementById('newClassNameInput').value = '';
+        if (classNameInput) classNameInput.value = '';
         fetchClassesList();
         populateClassDropdowns();
         updateDashboardCounters();
@@ -807,12 +1045,12 @@ function createNewClass() {
 
 function fetchClassesList() {
     const container = document.getElementById('classListContainer');
-    container.innerHTML = `<p style="color: #6b7280; font-size: 0.85rem;">Loading classes...</p>`;
+    if (!container) return;
+    container.innerHTML = `<p style="color: var(--text-muted); font-size: 0.85rem;">Loading classes...</p>`;
 
     db.collection('classes').orderBy('createdAt', 'desc').get().then(snapshot => {
         if (snapshot.empty) {
-            container.innerHTML = `<p style="color: #6b7280; font-size: 0.85rem;">No custom classes created yet.</p>`;
-            document.getElementById('classesCountHeader').innerText = `All Created Classes & Rosters (0)`;
+            container.innerHTML = `<p style="color: var(--text-muted); font-size: 0.85rem;">No custom classes created yet.</p>`;
             return;
         }
 
@@ -824,15 +1062,13 @@ function fetchClassesList() {
             });
 
             let html = '';
-            let count = 0;
             snapshot.forEach(doc => {
-                count++;
                 const data = doc.data();
                 const studentEnrolledCount = studentCounts[data.className] || 0;
                 html += `
-                    <div style="display: flex; justify-content: space-between; align-items: center; background: white; padding: 8px 12px; border-radius: 6px; margin-bottom: 6px; border: 1px solid var(--border-color); font-size: 0.85rem; flex-wrap: wrap; gap: 8px;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; background: var(--card-bg); padding: 8px 12px; border-radius: 6px; margin-bottom: 6px; border: 1px solid var(--border-color); font-size: 0.85rem; flex-wrap: wrap; gap: 8px;">
                         <div>
-                            <b>${data.className}</b> <span style="color: #6b7280; font-size: 0.75rem;">(${studentEnrolledCount} Students Enrolled)</span>
+                            <b>${data.className}</b> <span style="color: var(--text-muted); font-size: 0.75rem;">(${studentEnrolledCount} Students Enrolled)</span>
                         </div>
                         <div style="display: flex; gap: 6px;">
                             <button onclick="viewClassRoster('${data.className}')" style="background: #2563eb; color: white; border: none; padding: 4px 8px; border-radius: 4px; cursor: pointer;" title="View Students"><i class="fa-solid fa-users"></i></button>
@@ -841,7 +1077,6 @@ function fetchClassesList() {
                     </div>
                 `;
             });
-            document.getElementById('classesCountHeader').innerText = `All Created Classes & Rosters (${count})`;
             container.innerHTML = html;
         });
     });
@@ -861,18 +1096,14 @@ function viewClassRoster(className) {
     db.collection('users').where('assignedClass', '==', className).get().then(snapshot => {
         let rosterHTML = `<h3>Students in ${className} (${snapshot.size})</h3><div style="margin-top:10px; max-height:300px; overflow-y:auto;">`;
         if (snapshot.empty) {
-            rosterHTML += `<p style="color: #6b7280; font-size: 0.85rem;">No students enrolled in this class.</p>`;
+            rosterHTML += `<p style="color: var(--text-muted); font-size: 0.85rem;">No students enrolled.</p>`;
         } else {
             snapshot.forEach(doc => {
                 let s = doc.data();
                 rosterHTML += `
-                    <div style="display:flex; justify-content:space-between; align-items:center; background:#f9fafb; padding:6px 10px; margin-bottom:4px; border-radius:4px; border:1px solid #e5e7eb; font-size:0.85rem;">
+                    <div style="display:flex; justify-content:space-between; align-items:center; background:var(--bg-gray); padding:6px 10px; margin-bottom:4px; border-radius:4px; border:1px solid var(--border-color); font-size:0.85rem;">
                         <span><i class="fa-solid fa-user" style="color:var(--naija-green); margin-right:6px;"></i><b>${s.username}</b> (${s.email})</span>
-                        <div style="display:flex; gap:4px;">
-                            <button onclick="openProfileModal('${doc.id}')" style="background:#4b5563; color:white; border:none; padding:4px 8px; border-radius:4px; cursor:pointer;" title="View Profile"><i class="fa-solid fa-user"></i></button>
-                            <button onclick="openReassignModal('${doc.id}')" style="background:#d97706; color:white; border:none; padding:4px 8px; border-radius:4px; cursor:pointer;" title="Assign / De-assign"><i class="fa-solid fa-chalkboard-user"></i></button>
-                            <button onclick="removeStudentFromClass('${doc.id}')" style="background:#dc2626; color:white; border:none; padding:4px 8px; border-radius:4px; cursor:pointer;" title="Remove from class"><i class="fa-solid fa-user-minus"></i></button>
-                        </div>
+                        <button onclick="openProfileModal('${doc.id}')" class="primary-btn" style="padding: 2px 6px; font-size: 0.75rem;">Profile</button>
                     </div>
                 `;
             });
@@ -893,6 +1124,7 @@ function populateClassDropdowns() {
         let editSelect = document.getElementById('editProfileClass');
         let filterTSelect = document.getElementById('filterTeacherClass');
         let filterSSelect = document.getElementById('filterStudentClass');
+        let filterRSelect = document.getElementById('filterResultClass');
         
         let optionsHtml = '<option value="">-- Select Available Class --</option>';
         let reoptionsHtml = '<option value="None">-- Unassigned / None --</option>';
@@ -911,61 +1143,43 @@ function populateClassDropdowns() {
         if (editSelect) editSelect.innerHTML = reoptionsHtml;
         if (filterTSelect && filterTSelect.options.length <= 1) filterTSelect.innerHTML = filterOptionsHtml;
         if (filterSSelect && filterSSelect.options.length <= 1) filterSSelect.innerHTML = filterOptionsHtml;
+        if (filterRSelect && filterRSelect.options.length <= 1) filterRSelect.innerHTML = filterOptionsHtml;
     });
 }
 
 function fetchTeachersList() {
     const container = document.getElementById('teachersListContainer');
+    if (!container) return;
     const classFilter = document.getElementById('filterTeacherClass') ? document.getElementById('filterTeacherClass').value : 'ALL';
-    container.innerHTML = `<p style="color: #6b7280; font-size: 0.85rem;">Loading teachers...</p>`;
+    container.innerHTML = `<p style="color: var(--text-muted); font-size: 0.85rem;">Loading teachers...</p>`;
 
     db.collection('users').where('role', '==', 'teacher').get().then(teacherSnap => {
         if (teacherSnap.empty) {
-            container.innerHTML = `<p style="color: #6b7280; font-size: 0.85rem;">No teachers registered yet.</p>`;
-            document.getElementById('teachersCountHeader').innerText = `All Registered Teachers (0)`;
+            container.innerHTML = `<p style="color: var(--text-muted); font-size: 0.85rem;">No teachers registered yet.</p>`;
             return;
         }
 
-        db.collection('users').where('role', '==', 'student').get().then(studentSnap => {
-            let classStudentCounts = {};
-            studentSnap.forEach(doc => {
-                let c = doc.data().assignedClass;
-                if(c) classStudentCounts[c] = (classStudentCounts[c] || 0) + 1;
-            });
+        let html = '';
+        teacherSnap.forEach(doc => {
+            let t = doc.data();
+            let assignedClass = t.assignedClass || "None";
+            if (classFilter !== 'ALL' && assignedClass !== classFilter) return;
 
-            let html = '';
-            let filteredCount = 0;
-
-            teacherSnap.forEach(doc => {
-                let t = doc.data();
-                let assignedClass = t.assignedClass || "None";
-                
-                if (classFilter !== 'ALL' && assignedClass !== classFilter) {
-                    return;
-                }
-
-                filteredCount++;
-                let studentCount = assignedClass !== "None" ? (classStudentCounts[assignedClass] || 0) : 0;
-                let titlePrefix = t.teacherTitle ? `${t.teacherTitle} ` : "";
-
-                html += `
-                    <div style="display: flex; justify-content: space-between; align-items: center; background: white; padding: 8px 12px; border-radius: 6px; margin-bottom: 6px; border: 1px solid var(--border-color); font-size: 0.85rem; flex-wrap: wrap; gap: 8px;">
-                        <div>
-                            <i class="fa-solid fa-user" style="color:var(--naija-green); margin-right:6px;"></i><b>${titlePrefix}${t.username}</b> (${t.email})<br>
-                            <span style="color: #4b5563; font-size: 0.75rem;">Class: <b>${assignedClass}</b> | Students Managed: <b>${studentCount}</b></span>
-                        </div>
-                        <div style="display: flex; gap: 6px;">
-                            <button onclick="openProfileModal('${doc.id}')" style="background: #4b5563; color: white; border: none; padding: 6px 10px; border-radius: 4px; cursor: pointer;" title="View Profile"><i class="fa-solid fa-user"></i></button>
-                            <button onclick="openReassignModal('${doc.id}')" style="background: #2563eb; color: white; border: none; padding: 6px 10px; border-radius: 4px; cursor: pointer;" title="Assign / De-assign Class"><i class="fa-solid fa-chalkboard-user"></i></button>
-                            <button onclick="deleteTeacherAccount('${doc.id}')" style="background: #dc2626; color: white; border: none; padding: 6px 10px; border-radius: 4px; cursor: pointer;" title="Delete Teacher"><i class="fa-solid fa-trash"></i></button>
-                        </div>
+            let titlePrefix = t.teacherTitle ? `${t.teacherTitle} ` : "";
+            html += `
+                <div style="display: flex; justify-content: space-between; align-items: center; background: var(--card-bg); padding: 8px 12px; border-radius: 6px; margin-bottom: 6px; border: 1px solid var(--border-color); font-size: 0.85rem; flex-wrap: wrap; gap: 8px;">
+                    <div>
+                        <i class="fa-solid fa-user" style="color:var(--naija-green); margin-right:6px;"></i><b>${titlePrefix}${t.username}</b> (${t.email})<br>
+                        <span style="color: var(--text-muted); font-size: 0.75rem;">Class: <b>${assignedClass}</b></span>
                     </div>
-                `;
-            });
-
-            document.getElementById('teachersCountHeader').innerText = `All Registered Teachers (${filteredCount})`;
-            container.innerHTML = html || `<p style="color: #6b7280; font-size: 0.85rem;">No teachers found for this class filter.</p>`;
+                    <div style="display: flex; gap: 6px;">
+                        <button onclick="openProfileModal('${doc.id}')" class="primary-btn" style="padding: 4px 8px; font-size: 0.75rem;">Profile</button>
+                        <button onclick="deleteTeacherAccount('${doc.id}')" class="logout-btn" style="padding: 4px 8px; font-size: 0.75rem;">Delete</button>
+                    </div>
+                </div>
+            `;
         });
+        container.innerHTML = html || `<p style="color: var(--text-muted); font-size: 0.85rem;">No teachers found for this filter.</p>`;
     });
 }
 
@@ -980,40 +1194,31 @@ function preRegisterTeacher() {
         alert("Please enter teacher name and email.");
         return;
     }
-
     if (!email.endsWith('@gmail.com')) {
         alert("⚠️ Please provide a valid @gmail.com address.");
         return;
     }
 
-    db.collection('users').where('email', '==', email).get().then(snapshot => {
-        if (!snapshot.empty) {
-            alert("A user with this email is already pre-registered!");
-            return;
-        }
-
-        db.collection('users').add({
-            teacherTitle: title,
-            username: name,
-            email: email,
-            role: 'teacher',
-            assignedClass: assignedClass || 'None',
-            gender: gender,
-            isRegisteredByAdmin: true,
-            createdAt: new Date()
-        }).then(() => {
-            alert(`Teacher ${title} ${name} pre-registered successfully! They can now sign up securely.`);
-            document.getElementById('teacherNameInput').value = '';
-            document.getElementById('teacherEmailInput').value = '';
-            document.getElementById('teacherEmailWarning').classList.add('hidden');
-            fetchTeachersList();
-            updateDashboardCounters();
-        });
+    db.collection('users').add({
+        teacherTitle: title,
+        username: name,
+        email: email,
+        role: 'teacher',
+        assignedClass: assignedClass || 'None',
+        gender: gender,
+        isRegisteredByAdmin: true,
+        createdAt: new Date()
+    }).then(() => {
+        alert(`Teacher ${title} ${name} pre-registered successfully!`);
+        document.getElementById('teacherNameInput').value = '';
+        document.getElementById('teacherEmailInput').value = '';
+        fetchTeachersList();
+        updateDashboardCounters();
     });
 }
 
 function deleteTeacherAccount(docId) {
-    if (confirm("Are you sure you want to delete this teacher record?")) {
+    if (confirm("Delete this teacher?")) {
         db.collection('users').doc(docId).delete().then(() => {
             fetchTeachersList();
             updateDashboardCounters();
@@ -1023,44 +1228,36 @@ function deleteTeacherAccount(docId) {
 
 function fetchStudentsList() {
     const container = document.getElementById('studentsListContainer');
+    if (!container) return;
     const classFilter = document.getElementById('filterStudentClass') ? document.getElementById('filterStudentClass').value : 'ALL';
-    container.innerHTML = `<p style="color: #6b7280; font-size: 0.85rem;">Loading students...</p>`;
+    container.innerHTML = `<p style="color: var(--text-muted); font-size: 0.85rem;">Loading students...</p>`;
 
     db.collection('users').where('role', '==', 'student').get().then(snapshot => {
         if (snapshot.empty) {
-            container.innerHTML = `<p style="color: #6b7280; font-size: 0.85rem;">No students registered yet.</p>`;
-            document.getElementById('studentsCountHeader').innerText = `All Registered Students (0)`;
+            container.innerHTML = `<p style="color: var(--text-muted); font-size: 0.85rem;">No students registered yet.</p>`;
             return;
         }
 
         let html = '';
-        let filteredCount = 0;
-
         snapshot.forEach(doc => {
             let s = doc.data();
             let assignedClass = s.assignedClass || 'None';
+            if (classFilter !== 'ALL' && assignedClass !== classFilter) return;
 
-            if (classFilter !== 'ALL' && assignedClass !== classFilter) {
-                return;
-            }
-
-            filteredCount++;
             html += `
-                <div style="display: flex; justify-content: space-between; align-items: center; background: white; padding: 8px 12px; border-radius: 6px; margin-bottom: 6px; border: 1px solid var(--border-color); font-size: 0.85rem; flex-wrap: wrap; gap: 8px;">
+                <div style="display: flex; justify-content: space-between; align-items: center; background: var(--card-bg); padding: 8px 12px; border-radius: 6px; margin-bottom: 6px; border: 1px solid var(--border-color); font-size: 0.85rem; flex-wrap: wrap; gap: 8px;">
                     <div>
                         <i class="fa-solid fa-user" style="color:var(--naija-green); margin-right:6px;"></i><b>${s.username}</b> (${s.email})<br>
-                        <span style="color: #4b5563; font-size: 0.75rem;">Class: <b>${assignedClass}</b> | Track: <b>${s.examTrack || 'ALL'}</b></span>
+                        <span style="color: var(--text-muted); font-size: 0.75rem;">Class: <b>${assignedClass}</b> | Track: <b>${s.examTrack || 'ALL'}</b></span>
                     </div>
                     <div style="display: flex; gap: 6px;">
-                        <button onclick="openProfileModal('${doc.id}')" style="background: #4b5563; color: white; border: none; padding: 6px 10px; border-radius: 4px; cursor: pointer;" title="View Profile"><i class="fa-solid fa-user"></i></button>
-                        <button onclick="openReassignModal('${doc.id}')" style="background: #2563eb; color: white; border: none; padding: 6px 10px; border-radius: 4px; cursor: pointer;" title="Assign / De-assign Class"><i class="fa-solid fa-chalkboard-user"></i></button>
-                        <button onclick="deleteStudentAccount('${doc.id}')" style="background: #dc2626; color: white; border: none; padding: 6px 10px; border-radius: 4px; cursor: pointer;" title="Delete Student"><i class="fa-solid fa-trash"></i></button>
+                        <button onclick="openProfileModal('${doc.id}')" class="primary-btn" style="padding: 4px 8px; font-size: 0.75rem;">Profile</button>
+                        <button onclick="deleteStudentAccount('${doc.id}')" class="logout-btn" style="padding: 4px 8px; font-size: 0.75rem;">Delete</button>
                     </div>
                 </div>
             `;
         });
-        document.getElementById('studentsCountHeader').innerText = `All Registered Students (${filteredCount})`;
-        container.innerHTML = html || `<p style="color: #6b7280; font-size: 0.85rem;">No students found for this class filter.</p>`;
+        container.innerHTML = html || `<p style="color: var(--text-muted); font-size: 0.85rem;">No students found for this filter.</p>`;
     });
 }
 
@@ -1072,81 +1269,39 @@ function registerStudentByAdmin() {
     const gender = document.getElementById('studentGenderSelect').value;
 
     if (!name || !email || !studentClass) {
-        alert("Please fill in student name, email, and select an available class.");
+        alert("Please fill in student name, email, and select class.");
         return;
     }
-
     if (!email.endsWith('@gmail.com')) {
         alert("⚠️ Please provide a valid @gmail.com address.");
         return;
     }
 
-    db.collection('users').where('email', '==', email).get().then(snapshot => {
-        if (!snapshot.empty) {
-            alert("A student with this email is already pre-registered!");
-            return;
-        }
-
-        db.collection('users').add({
-            username: name,
-            email: email,
-            role: 'student',
-            assignedClass: studentClass,
-            examTrack: examTrack,
-            gender: gender,
-            isRegisteredByAdmin: true,
-            createdAt: new Date()
-        }).then(() => {
-            alert(`Student ${name} pre-registered successfully! They can now sign up securely.`);
-            document.getElementById('studentNameInput').value = '';
-            document.getElementById('studentEmailInput').value = '';
-            document.getElementById('studentEmailWarning').classList.add('hidden');
-            fetchStudentsList();
-            updateDashboardCounters();
-        });
+    db.collection('users').add({
+        username: name,
+        email: email,
+        role: 'student',
+        assignedClass: studentClass,
+        examTrack: examTrack,
+        gender: gender,
+        isRegisteredByAdmin: true,
+        createdAt: new Date()
+    }).then(() => {
+        alert(`Student ${name} pre-registered successfully!`);
+        document.getElementById('studentNameInput').value = '';
+        document.getElementById('studentEmailInput').value = '';
+        fetchStudentsList();
+        updateDashboardCounters();
     });
 }
 
 function deleteStudentAccount(docId) {
-    if (confirm("Are you sure you want to delete this student record?")) {
+    if (confirm("Delete this student?")) {
         db.collection('users').doc(docId).delete().then(() => {
             fetchStudentsList();
             updateDashboardCounters();
         });
     }
-}
-
-function removeStudentFromClass(docId) {
-    if (confirm("Remove this student from their class?")) {
-        db.collection('users').doc(docId).update({ assignedClass: "Unassigned" }).then(() => {
-            fetchStudentsList();
-        });
-    }
-}
-
-function openReassignModal(userId) {
-    document.getElementById('reassignUserId').value = userId;
-    db.collection('classes').get().then(snapshot => {
-        let select = document.getElementById('reassignClassSelect');
-        let optionsHtml = '<option value="None">-- Unassigned / None --</option>';
-        snapshot.forEach(doc => {
-            let c = doc.data().className;
-            optionsHtml += `<option value="${c}">${c}</option>`;
-        });
-        select.innerHTML = optionsHtml;
-        document.getElementById('reassignModal').classList.remove('hidden');
-    });
-}
-function closeReassignModal() { document.getElementById('reassignModal').classList.add('hidden'); }
-function saveUserReassignment() {
-    let userId = document.getElementById('reassignUserId').value;
-    let newClass = document.getElementById('reassignClassSelect').value;
-    db.collection('users').doc(userId).update({ assignedClass: newClass }).then(() => {
-        alert("Class assignment updated successfully!");
-        closeReassignModal();
-        fetchStudentsList();
-        fetchTeachersList();
-    });
 }
 
 function openProfileModal(userId) {
@@ -1189,240 +1344,14 @@ function openProfileModal(userId) {
 }
 function closeProfileModal() { document.getElementById('profileModal').classList.add('hidden'); }
 
-function openEditProfileModal() {
-    if (!activeProfileData || !activeProfileId) return;
-    document.getElementById('editUserId').value = activeProfileId;
-    document.getElementById('editUserRole').value = activeProfileData.role || 'student';
-    document.getElementById('editProfileName').value = activeProfileData.username || '';
-    document.getElementById('editProfileEmail').value = activeProfileData.email || '';
-    document.getElementById('editProfileGender').value = activeProfileData.gender || 'Male';
-
-    const trackGroup = document.getElementById('editProfileTrackGroup');
-    const titleGroup = document.getElementById('editTeacherTitleGroup');
-
-    if (activeProfileData.role === 'teacher') {
-        trackGroup.style.display = 'none';
-        titleGroup.style.display = 'flex';
-        document.getElementById('editTeacherTitle').value = activeProfileData.teacherTitle || 'Mr.';
-    } else {
-        trackGroup.style.display = 'flex';
-        titleGroup.style.display = 'none';
-        document.getElementById('editProfileTrack').value = activeProfileData.examTrack || 'ALL';
-    }
-    
-    populateClassDropdowns();
-    setTimeout(() => {
-        document.getElementById('editProfileClass').value = activeProfileData.assignedClass || 'None';
-    }, 200);
-
-    closeProfileModal();
-    document.getElementById('editProfileModal').classList.remove('hidden');
-}
-function closeEditProfileModal() { document.getElementById('editProfileModal').classList.add('hidden'); }
-
-function saveProfileEdits() {
-    let userId = document.getElementById('editUserId').value;
-    let userRole = document.getElementById('editUserRole').value;
-    let newName = document.getElementById('editProfileName').value.trim();
-    let newEmail = document.getElementById('editProfileEmail').value.trim().toLowerCase();
-    let newGender = document.getElementById('editProfileGender').value;
-    let newClass = document.getElementById('editProfileClass').value;
-
-    if (!newName || !newEmail) {
-        alert("Name and email cannot be empty.");
-        return;
-    }
-    if (!newEmail.endsWith('@gmail.com')) {
-        alert("⚠️ Please provide a valid @gmail.com address.");
-        return;
-    }
-
-    let updatePayload = {
-        username: newName,
-        email: newEmail,
-        gender: newGender,
-        assignedClass: newClass
-    };
-
-    if (userRole === 'teacher') {
-        updatePayload.teacherTitle = document.getElementById('editTeacherTitle').value;
-    } else {
-        updatePayload.examTrack = document.getElementById('editProfileTrack').value;
-    }
-
-    db.collection('users').doc(userId).update(updatePayload).then(() => {
-        alert("Profile updated successfully!");
-        closeEditProfileModal();
-        fetchStudentsList();
-        fetchTeachersList();
-    }).catch(err => alert("Error updating profile: " + err.message));
-}
-
-function downloadProfilePDF() {
-    if (!activeProfileData) return;
-    const element = document.getElementById('pdfProfileContent');
-    const opt = {
-        margin:       10,
-        filename:     `${activeProfileData.username}_profile_slip.pdf`,
-        image:        { type: 'jpeg', quality: 0.98 },
-        html2canvas:  { scale: 2, backgroundColor: '#ffffff' },
-        jsPDF:        { unit: 'mm', format: 'a4', orientation: 'portrait' }
-    };
-    html2pdf().from(element).set(opt).save();
-}
-
-function downloadStudentCSVTemplate() {
-    let csvContent = "username,email,assignedClass,examTrack,gender\nNaeemah Uthman,naeemah@gmail.com,SS 3 Gold,ALL,Female\nWasiu Uthman,wasiu@gmail.com,SS 3 Science,JAMB,Male\n";
-    let blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    let url = URL.createObjectURL(blob);
-    let link = document.createElement("a");
-    link.setAttribute("href", url);
-    link.setAttribute("download", "elsa_student_template.csv");
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-}
-
-function parseStudentCSV() {
-    const fileInput = document.getElementById('studentCsvFileInput');
-    if (fileInput.files.length === 0) {
-        alert("Please select a student CSV file first.");
-        return;
-    }
-    const file = fileInput.files[0];
-    const reader = new FileReader();
-    reader.onload = function(e) {
-        const text = e.target.result;
-        const lines = text.split('\n').filter(line => line.trim() !== '');
-        if (lines.length < 2) {
-            alert("CSV file is empty or missing headers.");
-            return;
-        }
-        const batch = db.batch();
-        let count = 0;
-        for (let i = 1; i < lines.length; i++) {
-            const row = lines[i].split(',').map(col => col.replace(/^"|"$/g, '').trim());
-            if (row.length >= 5) {
-                let email = row[1].toLowerCase();
-                if (!email.endsWith('@gmail.com')) continue;
-                let newDocRef = db.collection('users').doc();
-                batch.set(newDocRef, {
-                    username: row[0],
-                    email: email,
-                    assignedClass: row[2],
-                    examTrack: row[3].toUpperCase(),
-                    gender: row[4],
-                    role: 'student',
-                    isRegisteredByAdmin: true,
-                    createdAt: new Date()
-                });
-                count++;
-            }
-        }
-        batch.commit().then(() => {
-            alert(`🎉 Successfully pre-registered ${count} students from CSV!`);
-            fileInput.value = '';
-            fetchStudentsList();
-            updateDashboardCounters();
-        }).catch(err => alert("Error uploading students: " + err.message));
-    };
-    reader.readAsText(file);
-}
-
-function downloadTeacherCSVTemplate() {
-    let csvContent = "teacherTitle,username,email,assignedClass,gender\nMr.,Ade,ade.teacher@gmail.com,SS 3 Gold,Male\nMrs.,Ngozi,ngozi.teacher@gmail.com,SS 3 Science,Female\n";
-    let blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    let url = URL.createObjectURL(blob);
-    let link = document.createElement("a");
-    link.setAttribute("href", url);
-    link.setAttribute("download", "elsa_teacher_template.csv");
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-}
-
-function parseTeacherCSV() {
-    const fileInput = document.getElementById('teacherCsvFileInput');
-    if (fileInput.files.length === 0) {
-        alert("Please select a teacher CSV file first.");
-        return;
-    }
-    const file = fileInput.files[0];
-    const reader = new FileReader();
-    reader.onload = function(e) {
-        const text = e.target.result;
-        const lines = text.split('\n').filter(line => line.trim() !== '');
-        if (lines.length < 2) {
-            alert("CSV file is empty or missing headers.");
-            return;
-        }
-        const batch = db.batch();
-        let count = 0;
-        for (let i = 1; i < lines.length; i++) {
-            const row = lines[i].split(',').map(col => col.replace(/^"|"$/g, '').trim());
-            if (row.length >= 5) {
-                let email = row[2].toLowerCase();
-                if (!email.endsWith('@gmail.com')) continue;
-                let newDocRef = db.collection('users').doc();
-                batch.set(newDocRef, {
-                    teacherTitle: row[0],
-                    username: row[1],
-                    email: email,
-                    assignedClass: row[3],
-                    gender: row[4],
-                    role: 'teacher',
-                    isRegisteredByAdmin: true,
-                    createdAt: new Date()
-                });
-                count++;
-            }
-        }
-        batch.commit().then(() => {
-            alert(`🎉 Successfully pre-registered ${count} teachers from CSV!`);
-            fileInput.value = '';
-            fetchTeachersList();
-            updateDashboardCounters();
-        }).catch(err => alert("Error uploading teachers: " + err.message));
-    };
-    reader.readAsText(file);
-}
-
-function downloadCSVTemplate(examType) {
-    let csvContent = "question_id,examType,subject,year,question_text,option_a,option_b,option_c,option_d,correct_option,explanation\n";
-    NIGERIAN_SUBJECTS.forEach((sub) => {
-        const idCode = sub.substring(0, 3).toUpperCase();
-        csvContent += `${examType}_${idCode}_001,${examType},${sub},2026,"Sample ${examType} past question for ${sub}.",Option A,Option B,Option C,Option D,A,"Explanation for ${sub}."\n`;
-    });
-    let blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    let url = URL.createObjectURL(blob);
-    let link = document.createElement("a");
-    link.setAttribute("href", url);
-    link.setAttribute("download", `elsa_${examType.toLowerCase()}_template.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-}
-
-function checkDeleteConfirmation(input) {
-    const btn = document.getElementById('dangerDeleteBtn');
-    const targetText = `DELETE ${currentManagedTrack}`;
-    if (input.value.trim().toUpperCase() === targetText) {
-        btn.disabled = false;
-        btn.style.background = "#dc2626";
-        btn.style.cursor = "pointer";
-    } else {
-        btn.disabled = true;
-        btn.style.background = "#9ca3af";
-        btn.style.cursor = "not-allowed";
-    }
-}
-
+// Question Bank Management & CSV Upload with Image Support
 function saveSingleQuestion() {
     const editId = document.getElementById('editQuestionId').value;
     const examType = document.getElementById('singleExamType').value;
     const subject = document.getElementById('singleSubject').value;
-    const year = document.getElementById('singleYear').value.trim();
+    const year = document.getElementById('singleYear').value.trim() || "2026";
     const questionText = document.getElementById('singleQuestionText').value.trim();
+    const imageUrl = document.getElementById('singleImageUrl').value.trim();
     const optA = document.getElementById('singleOptA').value.trim();
     const optB = document.getElementById('singleOptB').value.trim();
     const optC = document.getElementById('singleOptC').value.trim();
@@ -1431,41 +1360,42 @@ function saveSingleQuestion() {
     const explanation = document.getElementById('singleExplanation').value.trim();
 
     if (!subject || !questionText || !optA || !optB || !optC || !optD) {
-        alert("Please fill in all required question fields and select a subject.");
+        alert("Please fill in all required question fields.");
         return;
     }
 
     const questionId = editId ? editId : `${examType}_${subject.substring(0,3).toUpperCase()}_${Date.now()}`;
-    
+
     db.collection('questions').doc(questionId).set({
         questionId: questionId,
         examType: examType,
         subject: subject,
-        year: year || "2026",
+        year: year,
         questionText: questionText,
+        imageUrl: imageUrl,
         options: { A: optA, B: optB, C: optC, D: optD },
         correctOption: correct,
         explanation: explanation || "No explanation provided.",
         isPublished: true,
         uploadedAt: new Date()
     }, { merge: true }).then(() => {
-        alert(editId ? "Question updated successfully!" : "Single question added successfully!");
+        alert("Question saved successfully!");
         resetQuestionForm();
         fetchQuestionsForManagement(currentManagedTrack);
-    }).catch(err => alert(err.message));
+        updateDashboardCounters();
+    });
 }
 
 function resetQuestionForm() {
     document.getElementById('editQuestionId').value = '';
-    document.getElementById('singleSubject').selectedIndex = 0;
-    document.getElementById('singleYear').value = '';
     document.getElementById('singleQuestionText').value = '';
+    document.getElementById('singleImageUrl').value = '';
     document.getElementById('singleOptA').value = '';
     document.getElementById('singleOptB').value = '';
     document.getElementById('singleOptC').value = '';
     document.getElementById('singleOptD').value = '';
     document.getElementById('singleExplanation').value = '';
-    document.getElementById('saveQuestionBtn').innerText = "Save Question to Database";
+    document.getElementById('saveQuestionBtn').innerText = "Save Question to Firestore";
     document.getElementById('cancelEditBtn').classList.add('hidden');
 }
 
@@ -1478,6 +1408,7 @@ function editQuestion(docId) {
             document.getElementById('singleSubject').value = q.subject;
             document.getElementById('singleYear').value = q.year;
             document.getElementById('singleQuestionText').value = q.questionText;
+            document.getElementById('singleImageUrl').value = q.imageUrl || '';
             document.getElementById('singleOptA').value = q.options.A;
             document.getElementById('singleOptB').value = q.options.B;
             document.getElementById('singleOptC').value = q.options.C;
@@ -1496,19 +1427,23 @@ function viewFullQuestion(docId) {
     db.collection('questions').doc(docId).get().then(doc => {
         if (doc.exists) {
             const q = doc.data();
+            let imgHtml = q.imageUrl ? `<div style="margin-top:10px;"><img src="${q.imageUrl}" style="max-width:100%; max-height:220px; border-radius:6px;"></div>` : '';
             const modalContent = document.getElementById('modalQuestionContent');
-            modalContent.innerHTML = `
-                <p><b>Exam Track:</b> ${q.examType} | <b>Subject:</b> ${q.subject} | <b>Year:</b> ${q.year}</p>
-                <p style="background: #f9fafb; padding: 10px; border-radius: 6px; border: 1px solid var(--border-color);"><b>Question:</b><br>${q.questionText}</p>
-                <ul style="list-style-type: none; display: flex; flex-direction: column; gap: 4px;">
-                    <li><b>A.</b> ${q.options.A}</li>
-                    <li><b>B.</b> ${q.options.B}</li>
-                    <li><b>C.</b> ${q.options.C}</li>
-                    <li><b>D.</b> ${q.options.D}</li>
-                </ul>
-                <p style="color: var(--naija-green); font-weight: bold;">Correct Option: ${q.correctOption}</p>
-                <p style="font-style: italic; color: #4b5563;">Explanation: ${q.explanation}</p>
-            `;
+            if (modalContent) {
+                modalContent.innerHTML = `
+                    <p><b>Exam Track:</b> ${q.examType} | <b>Subject:</b> ${q.subject} | <b>Year:</b> ${q.year}</p>
+                    <p style="background: var(--bg-gray); padding: 10px; border-radius: 6px; border: 1px solid var(--border-color); margin-top: 8px;"><b>Question:</b><br>${q.questionText}</p>
+                    ${imgHtml}
+                    <ul style="list-style-type: none; display: flex; flex-direction: column; gap: 4px; margin-top: 10px;">
+                        <li><b>A.</b> ${q.options.A}</li>
+                        <li><b>B.</b> ${q.options.B}</li>
+                        <li><b>C.</b> ${q.options.C}</li>
+                        <li><b>D.</b> ${q.options.D}</li>
+                    </ul>
+                    <p style="color: var(--naija-green); font-weight: bold; margin-top: 8px;">Correct Option: ${q.correctOption}</p>
+                    <p style="font-style: italic; color: var(--text-muted); margin-top: 4px;">Explanation: ${q.explanation}</p>
+                `;
+            }
             document.getElementById('questionViewModal').classList.remove('hidden');
         }
     });
@@ -1530,19 +1465,23 @@ function fetchQuestionsForManagement(examType) {
 
     const delInput = document.getElementById('deleteConfirmationInput');
     if(delInput) delInput.value = '';
+    const delHeader = document.getElementById('dangerZoneHeaderTitle');
+    if(delHeader) delHeader.innerText = `Danger Zone: Delete Entire ${examType} Track`;
     const delBtn = document.getElementById('dangerDeleteBtn');
     if(delBtn) {
         delBtn.disabled = true;
         delBtn.style.background = "#9ca3af";
         delBtn.style.cursor = "not-allowed";
+        delBtn.innerText = `Delete All ${examType} Questions`;
     }
 
     const listEl = document.getElementById('questionBankList');
-    listEl.innerHTML = `<p style="color: #6b7280; font-size: 0.85rem;">Loading ${examType} question bank...</p>`;
+    if (!listEl) return;
+    listEl.innerHTML = `<p class="muted-text">Loading ${examType} questions...</p>`;
 
     db.collection('questions').where('examType', '==', examType).get().then(snapshot => {
         if (snapshot.empty) {
-            listEl.innerHTML = `<p style="color: #6b7280; font-size: 0.85rem;">No questions stored for ${examType} yet.</p>`;
+            listEl.innerHTML = `<p class="muted-text">No questions stored for ${examType}.</p>`;
             return;
         }
 
@@ -1551,30 +1490,45 @@ function fetchQuestionsForManagement(examType) {
             const q = doc.data();
             const isPub = q.isPublished !== false;
             html += `
-                <div style="background: white; padding: 10px; border-radius: 6px; margin-bottom: 8px; font-size: 0.8rem; border: 1px solid var(--border-color);">
+                <div style="background: var(--card-bg); padding: 10px; border-radius: 6px; margin-bottom: 8px; border: 1px solid var(--border-color); font-size: 0.8rem;">
                     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; flex-wrap: wrap; gap: 4px;">
                         <div>
                             <b>[${q.subject}]</b> Year: ${q.year} | Status: <span style="color: ${isPub ? 'var(--naija-green)' : '#d97706'}; font-weight: bold;">${isPub ? 'Published' : 'Unpublished'}</span>
                         </div>
                         <div style="display: flex; gap: 6px;">
                             <button onclick="viewFullQuestion('${doc.id}')" title="View Full Question" style="background: #4b5563; color: white; border: none; padding: 4px 8px; border-radius: 4px; cursor: pointer;"><i class="fa-solid fa-eye"></i></button>
-                            <button onclick="togglePublishStatus('${doc.id}', ${isPub})" title="Publish / Unpublish" style="background: ${isPub ? '#d97706' : 'var(--naija-green)'}; color: white; border: none; padding: 4px 8px; border-radius: 4px; cursor: pointer;"><i class="fa-solid ${isPub ? 'fa-eye-slash' : 'fa-eye'}"></i></button>
-                            <button onclick="editQuestion('${doc.id}')" title="Edit Question" style="background: #2563eb; color: white; border: none; padding: 4px 8px; border-radius: 4px; cursor: pointer;"><i class="fa-solid fa-pen-to-square"></i></button>
-                            <button onclick="deleteSingleQuestion('${doc.id}')" title="Delete Question" style="background: #dc2626; color: white; border: none; padding: 4px 8px; border-radius: 4px; cursor: pointer;"><i class="fa-solid fa-trash"></i></button>
+                            <button onclick="togglePublishStatus('${doc.id}', ${isPub})" title="Publish/Unpublish" style="background: ${isPub ? '#d97706' : 'var(--naija-green)'}; color: white; border: none; padding: 4px 8px; border-radius: 4px; cursor: pointer;"><i class="fa-solid ${isPub ? 'fa-eye-slash' : 'fa-eye'}"></i></button>
+                            <button onclick="editQuestion('${doc.id}')" title="Edit" style="background: #2563eb; color: white; border: none; padding: 4px 8px; border-radius: 4px; cursor: pointer;"><i class="fa-solid fa-pen-to-square"></i></button>
+                            <button onclick="deleteSingleQuestion('${doc.id}')" title="Delete" style="background: #dc2626; color: white; border: none; padding: 4px 8px; border-radius: 4px; cursor: pointer;"><i class="fa-solid fa-trash"></i></button>
                         </div>
                     </div>
-                    <p style="color: #374151;">${q.questionText}</p>
+                    <p style="color: var(--text-color);">${q.questionText}</p>
                 </div>
             `;
         });
         listEl.innerHTML = html;
-    }).catch(err => alert(err.message));
+    });
+}
+
+function checkDeleteConfirmation(input) {
+    const btn = document.getElementById('dangerDeleteBtn');
+    const targetText = `DELETE ${currentManagedTrack}`;
+    if (btn && input.value.trim().toUpperCase() === targetText) {
+        btn.disabled = false;
+        btn.style.background = "#dc2626";
+        btn.style.cursor = "pointer";
+    } else if (btn) {
+        btn.disabled = true;
+        btn.style.background = "#9ca3af";
+        btn.style.cursor = "not-allowed";
+    }
 }
 
 function deleteSingleQuestion(docId) {
-    if (confirm("Are you sure you want to delete this question?")) {
+    if (confirm("Delete this question?")) {
         db.collection('questions').doc(docId).delete().then(() => {
             fetchQuestionsForManagement(currentManagedTrack);
+            updateDashboardCounters();
         });
     }
 }
@@ -1587,12 +1541,30 @@ function clearSelectedExamTrack() {
     }).then(() => {
         alert(`Successfully deleted all ${currentManagedTrack} questions.`);
         fetchQuestionsForManagement(currentManagedTrack);
+        updateDashboardCounters();
     });
+}
+
+// CSV Template & Parsing with Image Support
+function downloadCSVTemplate(examType) {
+    let csvContent = "question_id,examType,subject,year,question_text,image_url,option_a,option_b,option_c,option_d,correct_option,explanation\n";
+    NIGERIAN_SUBJECTS.forEach((sub) => {
+        const idCode = sub.substring(0, 3).toUpperCase();
+        csvContent += `${examType}_${idCode}_001,${examType},${sub},2026,"Sample ${examType} question for ${sub}.",https://example.com/image.png,Option A,Option B,Option C,Option D,A,"Explanation for ${sub}."\n`;
+    });
+    let blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    let url = URL.createObjectURL(blob);
+    let link = document.createElement("a");
+    link.setAttribute("href", url);
+    link.setAttribute("download", `elsa_${examType.toLowerCase()}_template.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
 }
 
 function parseCSVQuestions() {
     const fileInput = document.getElementById('csvFileInput');
-    if (fileInput.files.length === 0) {
+    if (!fileInput || fileInput.files.length === 0) {
         alert("Please select a CSV file first.");
         return;
     }
@@ -1605,81 +1577,173 @@ function parseCSVQuestions() {
             alert("CSV file is empty or missing headers.");
             return;
         }
-        const parsedQuestions = [];
+        const batch = db.batch();
+        let count = 0;
         for (let i = 1; i < lines.length; i++) {
             const row = lines[i].split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/).map(col => col.replace(/^"|"$/g, '').trim());
-            if (row.length >= 10) {
-                parsedQuestions.push({
-                    question_id: row[0] || `Q_${Date.now()}_${i}`,
-                    examType: row[1] || "JAMB",
+            if (row.length >= 11) {
+                let qId = row[0] || `Q_${Date.now()}_${i}`;
+                let docRef = db.collection('questions').doc(qId);
+                batch.set(docRef, {
+                    questionId: qId,
+                    examType: (row[1] || "JAMB").toUpperCase().trim(),
                     subject: row[2] || "Mathematics",
                     year: row[3] || "2026",
-                    question_text: row[4],
-                    option_a: row[5],
-                    option_b: row[6],
-                    option_c: row[7],
-                    option_d: row[8],
-                    correct_option: row[9],
-                    explanation: row[10] || "No explanation provided."
+                    questionText: row[4],
+                    imageUrl: row[5] || "",
+                    options: { A: row[6], B: row[7], C: row[8], D: row[9] },
+                    correctOption: (row[10] || "A").toUpperCase().trim(),
+                    explanation: row[11] || "No explanation provided.",
+                    isPublished: true,
+                    uploadedAt: new Date()
                 });
+                count++;
             }
         }
-        if (parsedQuestions.length > 0) {
-            uploadQuestionsToFirestore(parsedQuestions, fileInput);
-        } else {
-            alert("No valid question rows found in CSV.");
-        }
+        batch.commit().then(() => {
+            alert(`🎉 Successfully uploaded ${count} questions from CSV!`);
+            fileInput.value = '';
+            fetchQuestionsForManagement(currentManagedTrack);
+            updateDashboardCounters();
+        }).catch(err => alert("CSV Upload Error: " + err.message));
     };
     reader.readAsText(file);
 }
 
-function uploadQuestionsToFirestore(questions, fileInput) {
-    const batch = db.batch();
-    questions.forEach(q => {
-        const docRef = db.collection('questions').doc(q.question_id);
-        batch.set(docRef, {
-            questionId: q.question_id,
-            examType: q.examType.toUpperCase().trim(),
-            subject: q.subject.trim(),
-            year: q.year.trim(),
-            questionText: q.question_text,
-            options: { A: q.option_a, B: q.option_b, C: q.option_c, D: q.option_d },
-            correctOption: q.correct_option.toUpperCase().trim(),
-            explanation: q.explanation,
-            isPublished: true,
-            uploadedAt: new Date()
-        });
-    });
-    batch.commit().then(() => {
-        alert(`🎉 Successfully uploaded ${questions.length} questions into database!`);
-        fileInput.value = '';
-        fetchQuestionsForManagement('JAMB');
-    }).catch(err => alert("Firestore Upload Error: " + err.message));
+// Video Hub Management (Fully Clickable & Functional)
+function saveAdminVideo() {
+    const title = document.getElementById('videoTitleInput').value.trim();
+    const subject = document.getElementById('videoSubjectSelect').value;
+    const url = document.getElementById('videoUrlInput').value.trim();
+
+    if (!title || !subject || !url) {
+        alert("Please fill in all video details.");
+        return;
+    }
+
+    db.collection('videos').add({
+        title: title,
+        subject: subject,
+        url: url,
+        uploadedAt: new Date()
+    }).then(() => {
+        alert("Video lesson added successfully!");
+        document.getElementById('videoTitleInput').value = '';
+        document.getElementById('videoUrlInput').value = '';
+        fetchAdminVideos();
+    }).catch(err => alert("Error saving video: " + err.message));
 }
 
-function openStudyModal() { document.getElementById('studyModal').classList.remove('hidden'); fetchStudyQuestionCount(); }
-function closeStudyModal() { document.getElementById('studyModal').classList.add('hidden'); }
+function fetchAdminVideos() {
+    const container = document.getElementById('adminVideosListContainer');
+    if (!container) return;
+    container.innerHTML = `<p class="muted-text">Loading videos...</p>`;
+
+    db.collection('videos').get().then(snapshot => {
+        if (snapshot.empty) {
+            container.innerHTML = `<p class="muted-text">No video lessons uploaded yet.</p>`;
+            return;
+        }
+
+        let html = '';
+        snapshot.forEach(doc => {
+            let v = doc.data();
+            html += `
+                <div style="background: var(--card-bg); padding: 8px 12px; border-radius: 6px; margin-bottom: 6px; border: 1px solid var(--border-color); display: flex; justify-content: space-between; align-items: center; gap: 8px;">
+                    <span><b>${v.subject}:</b> ${v.title}</span>
+                    <button onclick="deleteAdminVideo('${doc.id}')" class="logout-btn" style="padding: 2px 6px; font-size: 0.7rem;">Delete</button>
+                </div>
+            `;
+        });
+        container.innerHTML = html;
+    });
+}
+
+function deleteAdminVideo(docId) {
+    if (confirm("Delete this video?")) {
+        db.collection('videos').doc(docId).delete().then(() => fetchAdminVideos());
+    }
+}
+
+// Study Hub & Question Palette with Exam Filtering
+let studyQuestionsList = [];
+let studyCurrentIndex = 0;
+let studyUserAnswers = {};
+
+function openStudyModal() {
+    const modal = document.getElementById('studyModal');
+    if (modal) modal.classList.remove('hidden');
+    fetchStudyQuestionCount();
+}
+function closeStudyModal() {
+    const modal = document.getElementById('studyModal');
+    if (modal) modal.classList.add('hidden');
+}
+
+function switchStudyViewMode(mode) {
+    const qBtn = document.getElementById('studyTabQuestionsBtn');
+    const vBtn = document.getElementById('studyTabVideosBtn');
+    const qCont = document.getElementById('studyQuestionsContainer');
+    const vCont = document.getElementById('studyVideosContainer');
+
+    if (mode === 'questions') {
+        if (qBtn) qBtn.classList.add('active');
+        if (vBtn) vBtn.classList.remove('active');
+        if (qCont) qCont.classList.remove('hidden');
+        if (vCont) vCont.classList.add('hidden');
+    } else {
+        if (vBtn) vBtn.classList.add('active');
+        if (qBtn) qBtn.classList.remove('active');
+        if (vCont) vCont.classList.remove('hidden');
+        if (qCont) qCont.classList.add('hidden');
+        loadStudyVideos();
+    }
+}
+
+function loadStudyVideos() {
+    const container = document.getElementById('studyVideosContainer');
+    if (!container) return;
+    container.innerHTML = `<p class="muted-text">Loading video lessons...</p>`;
+
+    db.collection('videos').get().then(snapshot => {
+        if (snapshot.empty) {
+            container.innerHTML = `<p class="muted-text">No video tutorials available.</p>`;
+            return;
+        }
+
+        let html = '<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px;">';
+        snapshot.forEach(doc => {
+            let v = doc.data();
+            html += `
+                <div class="content-box" style="margin-bottom: 0; background: var(--card-bg); border: 1px solid var(--border-color); padding: 14px; border-radius: 8px;">
+                    <h4 style="color: var(--naija-green); margin-bottom: 6px;">${v.subject}</h4>
+                    <p style="font-weight: bold; font-size: 0.9rem; margin-bottom: 10px;">${v.title}</p>
+                    <a href="${v.url}" target="_blank" class="primary-btn" style="display: inline-block; text-align: center; text-decoration: none; padding: 6px 12px; font-size: 0.8rem;"><i class="fa-solid fa-play"></i> Watch Video</a>
+                </div>
+            `;
+        });
+        html += '</div>';
+        container.innerHTML = html;
+    });
+}
 
 function fetchStudyQuestionCount() {
     const examType = document.getElementById('studyExamTypeSelect').value;
     const subject = document.getElementById('studySubjectSelect').value;
     const countDisplay = document.getElementById('studyQuestionCountDisplay');
+    if (!countDisplay) return;
 
     if (!subject) {
-        countDisplay.innerText = "Please select a subject to check available questions.";
+        countDisplay.innerText = "Please select a subject.";
         return;
     }
-    countDisplay.innerText = `Checking available ${examType} questions for ${subject}...`;
 
-    db.collection('questions')
-      .where('examType', '==', examType)
-      .where('subject', '==', subject)
-      .where('isPublished', '==', true)
-      .get()
-      .then(snapshot => {
-          countDisplay.innerText = `📚 Available Questions in Bank: ${snapshot.size}`;
-      })
-      .catch(err => { countDisplay.innerText = "Error fetching question count."; });
+    let query = db.collection('questions').where('subject', '==', subject);
+    if (examType !== 'ALL') query = query.where('examType', '==', examType);
+
+    query.get().then(snapshot => {
+        countDisplay.innerText = `📚 Available Questions in Database: ${snapshot.size}`;
+    });
 }
 
 function startStudySession() {
@@ -1687,79 +1751,131 @@ function startStudySession() {
     const subject = document.getElementById('studySubjectSelect').value;
 
     if (!subject) {
-        alert("Please select a subject for your study session.");
+        alert("Please select a subject.");
         return;
     }
+
     closeStudyModal();
     showView('viewStudyHub');
-    document.getElementById('studyHubTitle').innerText = `📖 Study Hub: ${examType} - ${subject} (All Questions)`;
+    const titleEl = document.getElementById('studyHubTitle');
+    if (titleEl) titleEl.innerText = `📖 Study Hub: ${subject} (${examType})`;
 
     const container = document.getElementById('studyQuestionsContainer');
-    container.innerHTML = `<p style="text-align: center; color: var(--naija-green); font-weight: bold; padding: 20px;">Loading study questions for ${subject}...</p>`;
+    if (!container) return;
+    container.innerHTML = `<p class="muted-text">Loading study questions...</p>`;
 
-    db.collection('questions')
-      .where('examType', '==', examType)
-      .where('subject', '==', subject)
-      .where('isPublished', '==', true)
-      .get()
-      .then((snapshot) => {
-          if (snapshot.empty) {
-              container.innerHTML = `<p style="text-align: center; color: #dc2626; font-weight: bold; padding: 20px;">No published questions found for ${subject} under ${examType}.</p>`;
-              return;
-          }
+    let query = db.collection('questions').where('subject', '==', subject);
+    if (examType !== 'ALL') query = query.where('examType', '==', examType);
 
-          let questions = [];
-          snapshot.forEach((doc) => { questions.push({ id: doc.id, ...doc.data() }); });
+    query.get().then(snapshot => {
+        if (snapshot.empty) {
+            container.innerHTML = `<p class="muted-text">No questions found for ${subject}.</p>`;
+            return;
+        }
 
-          let questionsHTML = '';
-          questions.forEach((q, index) => {
-              let escapedExplanation = (q.explanation || 'No detailed explanation available.').replace(/"/g, '&quot;');
-              let escapedCorrect = q.correctOption || 'A';
-              
-              questionsHTML += `
-                  <div style="padding: 20px; background: white; border-radius: 8px; border: 1px solid var(--border-color); box-shadow: 0 2px 4px rgba(0,0,0,0.02);">
-                      <p style="font-weight: bold; margin-bottom: 12px; color: #1f2937; font-size: 0.95rem;">
-                          ${index + 1}. [Year: ${q.year}] ${q.questionText}
-                      </p>
-                      <div style="display: flex; flex-direction: column; gap: 8px; font-size: 0.9rem; margin-bottom: 14px;">
-                          <div style="padding: 6px 10px; background: #f9fafb; border-radius: 4px;"><b>A.</b> ${q.options.A}</div>
-                          <div style="padding: 6px 10px; background: #f9fafb; border-radius: 4px;"><b>B.</b> ${q.options.B}</div>
-                          <div style="padding: 6px 10px; background: #f9fafb; border-radius: 4px;"><b>C.</b> ${q.options.C}</div>
-                          <div style="padding: 6px 10px; background: #f9fafb; border-radius: 4px;"><b>D.</b> ${q.options.D}</div>
-                      </div>
-                      <button onclick="openExplanationModal('${escapedCorrect}', '${escapedExplanation}')" class="primary-btn" style="background: #2563eb; font-size: 0.85rem; padding: 8px 14px;">
-                          <i class="fa-solid fa-lightbulb"></i> View Explanation
-                      </button>
-                  </div>
-              `;
-          });
-          container.innerHTML = questionsHTML;
-      });
+        studyQuestionsList = [];
+        snapshot.forEach(doc => { studyQuestionsList.push({ id: doc.id, ...doc.data() }); });
+        studyCurrentIndex = 0;
+        studyUserAnswers = {};
+        renderStudyHubInterface();
+    });
 }
 
-function openExplanationModal(correctOption, explanationText) {
-    const body = document.getElementById('explanationModalBody');
-    body.innerHTML = `
-        <div style="background: var(--naija-green-light); padding: 12px; border-radius: 6px; border: 1px solid #bbf7d0;">
-            <p style="font-weight: bold; color: var(--naija-green-dark); font-size: 1rem;">Correct Answer: ${correctOption}</p>
-        </div>
-        <div style="background: #f9fafb; padding: 14px; border-radius: 6px; border: 1px solid var(--border-color);">
-            <p style="font-weight: bold; margin-bottom: 4px; color: #374151;">Detailed Step-by-Step Solution:</p>
-            <p style="color: #4b5563; line-height: 1.5;">${explanationText}</p>
+function renderStudyHubInterface() {
+    const container = document.getElementById('studyQuestionsContainer');
+    if (!container || studyQuestionsList.length === 0) return;
+
+    const q = studyQuestionsList[studyCurrentIndex];
+    let imgHtml = q.imageUrl ? `<div style="margin-bottom:10px;"><img src="${q.imageUrl}" style="max-width:100%; max-height:220px; border-radius:6px;"></div>` : '';
+    
+    let optionsHtml = '';
+    ['A', 'B', 'C', 'D'].forEach(optKey => {
+        if (q.options && q.options[optKey]) {
+            let isSelected = studyUserAnswers[studyCurrentIndex] === optKey;
+            optionsHtml += `
+                <div onclick="selectStudyOption(${studyCurrentIndex}, '${optKey}')" class="cbt-option-item ${isSelected ? 'selected' : ''}" style="cursor: pointer; padding: 8px 12px; margin-bottom: 6px; border-radius: 6px; border: 1px solid var(--border-color);">
+                    <b>${optKey}.</b> ${q.options[optKey]}
+                </div>
+            `;
+        }
+    });
+
+    // Render palette buttons
+    let paletteHtml = '';
+    studyQuestionsList.forEach((item, idx) => {
+        let status = studyUserAnswers[idx] ? 'answered' : '';
+        if (idx === studyCurrentIndex) status += ' current';
+        paletteHtml += `<button onclick="jumpStudyQuestion(${idx})" class="palette-num-btn ${status}" style="width: 32px; height: 32px; font-size: 0.8rem; border-radius: 4px; border: 1px solid var(--border-color); background: var(--card-bg); color: var(--text-color); cursor: pointer;">${idx + 1}</button>`;
+    });
+
+    container.innerHTML = `
+        <div style="display: grid; grid-template-columns: 1fr 260px; gap: 16px; align-items: start;">
+            <div class="content-box" style="background: var(--card-bg); border: 1px solid var(--border-color); padding: 20px; border-radius: 8px;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                    <span class="brand-badge" style="font-size: 0.75rem; background: var(--naija-green-light); color: var(--naija-green-dark);">${q.examType || 'GENERAL'} • ${q.subject}</span>
+                    <span style="font-size: 0.75rem; color: var(--text-muted);">Year: ${q.year || '2026'} | Q ${studyCurrentIndex + 1} of ${studyQuestionsList.length}</span>
+                </div>
+                <p style="font-weight: bold; margin-bottom: 12px;">${q.questionText}</p>
+                ${imgHtml}
+                <div style="margin-bottom: 14px;">${optionsHtml}</div>
+                <div style="display: flex; gap: 10px;">
+                    <button onclick="navigateStudy(-1)" class="primary-btn" style="background: #4b5563; font-size: 0.8rem; padding: 6px 12px;"><i class="fa-solid fa-arrow-left"></i> Previous</button>
+                    <button onclick="openExplanationModal('${q.correctOption}', '${q.explanation.replace(/'/g, "\\'")}')" class="primary-btn" style="background: #2563eb; font-size: 0.8rem; padding: 6px 12px;"><i class="fa-solid fa-lightbulb"></i> Solution</button>
+                    <button onclick="navigateStudy(1)" class="primary-btn" style="font-size: 0.8rem; padding: 6px 12px;">Next <i class="fa-solid fa-arrow-right"></i></button>
+                </div>
+            </div>
+            <div style="background: var(--card-bg); padding: 14px; border-radius: 8px; border: 1px solid var(--border-color);">
+                <h4 style="font-size: 0.85rem; color: var(--naija-green); margin-bottom: 8px;">Question Palette</h4>
+                <div style="display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; max-height: 300px; overflow-y: auto;">
+                    ${paletteHtml}
+                </div>
+            </div>
         </div>
     `;
-    document.getElementById('explanationModal').classList.remove('hidden');
 }
-function closeExplanationModal() { document.getElementById('explanationModal').classList.add('hidden'); }
+
+function selectStudyOption(qIdx, optKey) {
+    studyUserAnswers[qIdx] = optKey;
+    renderStudyHubInterface();
+}
+
+function jumpStudyQuestion(idx) {
+    studyCurrentIndex = idx;
+    renderStudyHubInterface();
+}
+
+function navigateStudy(step) {
+    let newIdx = studyCurrentIndex + step;
+    if (newIdx >= 0 && newIdx < studyQuestionsList.length) {
+        studyCurrentIndex = newIdx;
+        renderStudyHubInterface();
+    }
+}
+
+function openExplanationModal(correctOpt, explanation) {
+    const body = document.getElementById('explanationModalBody');
+    if (body) {
+        body.innerHTML = `
+            <p style="font-weight: bold; color: var(--naija-green); margin-bottom: 8px;">Correct Answer: ${correctOpt}</p>
+            <p style="font-size: 0.9rem;">${explanation}</p>
+        `;
+    }
+    const modal = document.getElementById('explanationModal');
+    if (modal) modal.classList.remove('hidden');
+}
+
+function closeExplanationModal() {
+    const modal = document.getElementById('explanationModal');
+    if (modal) modal.classList.add('hidden');
+}
 
 function handleLogout() { auth.signOut().then(() => showLoggedOutUI()); }
 
 function showLoggedOutUI() {
-    document.getElementById('userStatusBadge').innerText = "Not Signed In";
+    document.getElementById('userStatusBadge').innerText = "Not Logged In";
     document.getElementById('logoutBtn').classList.add('hidden');
     document.getElementById('hamburgerBtn').classList.add('hidden');
     document.getElementById('appSidebar').classList.add('hidden');
-    document.getElementById('sidebarOverlay').classList.add('hidden');
     document.querySelectorAll('.dashboard-view').forEach(v => v.classList.add('hidden'));
     document.getElementById('authSection').classList.remove('hidden');
     switchAuthTab('login');
@@ -1768,30 +1884,33 @@ function showLoggedOutUI() {
 function handleLoginSubmit(e) {
     e.preventDefault();
     const email = document.getElementById('loginEmail').value.trim().toLowerCase();
+    const pass = document.getElementById('loginPassword').value;
+
     if (!email.endsWith('@gmail.com')) {
-        alert("⚠️ Please provide a valid @gmail.com address.");
+        alert("⚠️ Please enter a valid @gmail.com address.");
         return;
     }
-    auth.signInWithEmailAndPassword(email, document.getElementById('loginPassword').value)
-        .catch((err) => alert(err.message));
+
+    auth.signInWithEmailAndPassword(email, pass).catch(err => alert("Login Error: " + err.message));
 }
 
 function handleSignupSubmit(e) {
     e.preventDefault();
     const email = document.getElementById('signupEmail').value.trim().toLowerCase();
-    const role = document.getElementById('signupRole').value;
-    const username = document.getElementById('signupUsername').value.trim();
     const password = document.getElementById('signupPassword').value;
+    const username = document.getElementById('signupUsername').value.trim();
+    const role = document.getElementById('signupRole').value;
     const gender = document.getElementById('signupGender').value;
     const teacherTitle = document.getElementById('signupTeacherTitle').value;
     const passportInput = document.getElementById('signupPassportInput');
 
     if (!email.endsWith('@gmail.com')) {
-        alert("⚠️ Please provide a valid @gmail.com address.");
+        alert("⚠️ Please enter a valid @gmail.com address.");
         return;
     }
+
     if (role === 'admin' && !PERMITTED_ADMINS.includes(email)) {
-        alert("Access Denied: Unrecognized email for Admin registration.");
+        alert("Access Denied: Email not authorized for Admin account creation.");
         return;
     }
 
@@ -1824,12 +1943,12 @@ function handleSignupSubmit(e) {
                     return db.collection('users').doc(existingDocId).set(userPayload, { merge: true });
                 })
                 .then(() => {
-                    alert("🎉 Account created successfully! Welcome to ELSA-CBT.");
+                    alert("🎉 Account created successfully! Welcome to ELSA CBT.");
                 })
-                .catch((err) => alert(err.message));
+                .catch((err) => alert("Signup Failed: " + err.message));
         };
 
-        if (passportInput.files.length > 0) {
+        if (passportInput && passportInput.files.length > 0) {
             let reader = new FileReader();
             reader.onload = function(uploadEvent) {
                 processSignup(uploadEvent.target.result);
@@ -1839,4 +1958,21 @@ function handleSignupSubmit(e) {
             processSignup();
         }
     });
+}
+
+function downloadProfilePDF() {
+    const element = document.getElementById('pdfProfileContent');
+    if (!element) return;
+    const opt = {
+        margin:       10,
+        filename:     `ELSA_Profile_${activeProfileData ? activeProfileData.username : 'Slip'}.pdf`,
+        image:        { type: 'jpeg', quality: 0.98 },
+        html2canvas:  { scale: 2, useCORS: true },
+        jsPDF:        { unit: 'mm', format: 'a4', orientation: 'portrait' }
+    };
+    html2pdf().from(element).set(opt).save();
+}
+
+function switchStudyHubTab(mode) {
+    switchStudyViewMode(mode);
 }
