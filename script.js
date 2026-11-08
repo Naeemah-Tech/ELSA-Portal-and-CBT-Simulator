@@ -29,18 +29,40 @@ let userAnswers = {};
 let flaggedQuestions = {};
 let currentManagedTrack = "JAMB";
 let isExamActive = false;
-let homeChartInstance = null;
 let activeProfileData = null;
 let activeProfileId = null;
 let availableExamSubjects = [];
 let examStartTime = null;
+let rawQuestionBankData = [];
+
+// Automatic Inactivity Logout Timer (15 Minutes)
+let inactivityLogoutTimer = null;
+const INACTIVITY_TIMEOUT_MS = 15 * 60 * 1000;
+
+function resetInactivityTimer() {
+    if (isExamActive) {
+        if (inactivityLogoutTimer) clearTimeout(inactivityLogoutTimer);
+        return;
+    }
+    if (inactivityLogoutTimer) clearTimeout(inactivityLogoutTimer);
+    if (auth.currentUser) {
+        inactivityLogoutTimer = setTimeout(() => {
+            alert("⏰ Inactivity Timeout: You have been automatically logged out after 15 minutes of inactivity to conserve server resources.");
+            handleLogout();
+        }, INACTIVITY_TIMEOUT_MS);
+    }
+}
+
+['click', 'mousemove', 'keypress', 'scroll', 'touchstart'].forEach(evt => {
+    document.addEventListener(evt, resetInactivityTimer, true);
+});
 
 const NIGERIAN_SUBJECTS = [
     "Mathematics", "Use of English", "Physics", "Chemistry", "Biology",
     "Agricultural Science", "Economics", "Government", "Literature-in-English",
     "Christian Religious Knowledge (CRK)", "Islamic Religious Knowledge (IRK)", "Geography",
     "Financial Accounting", "Commerce", "Civic Education", "Computer Studies"
-];
+].sort();
 
 window.addEventListener('DOMContentLoaded', () => {
     const savedTheme = localStorage.getItem('elsa_cbt_theme') || 'dark';
@@ -49,13 +71,7 @@ window.addEventListener('DOMContentLoaded', () => {
     }
     updateThemeToggleUI(savedTheme);
 
-    const dropdowns = document.querySelectorAll('.subject-dropdown');
-    dropdowns.forEach(select => {
-        select.innerHTML = '<option value="">-- Select Subject --</option>';
-        NIGERIAN_SUBJECTS.forEach(sub => {
-            select.innerHTML += `<option value="${sub}">${sub}</option>`;
-        });
-    });
+    populateSubjectDropdowns();
 
     document.addEventListener('keydown', (e) => {
         if (e.key === 'Escape') {
@@ -65,9 +81,23 @@ window.addEventListener('DOMContentLoaded', () => {
             closeProfileModal();
             closeEditProfileModal();
             closeReassignModal();
+            closeContactAdminModal();
         }
     });
+
+    const sidebar = document.getElementById('appSidebar');
+    if (sidebar) sidebar.classList.remove('active-mobile-drawer');
 });
+
+function populateSubjectDropdowns() {
+    const dropdowns = document.querySelectorAll('.subject-dropdown');
+    dropdowns.forEach(select => {
+        select.innerHTML = '<option value="">-- Select Subject --</option>';
+        NIGERIAN_SUBJECTS.forEach(sub => {
+            select.innerHTML += `<option value="${sub}">${sub}</option>`;
+        });
+    });
+}
 
 function toggleGlobalTheme() {
     document.body.classList.toggle('dark-mode');
@@ -90,6 +120,18 @@ function updateThemeToggleUI(theme) {
     }
 }
 
+function togglePasswordVisibility(inputId, iconEl) {
+    const input = document.getElementById(inputId);
+    if (!input) return;
+    if (input.type === 'password') {
+        input.type = 'text';
+        iconEl.className = 'fa-solid fa-eye-slash toggle-password-icon';
+    } else {
+        input.type = 'password';
+        iconEl.className = 'fa-solid fa-eye toggle-password-icon';
+    }
+}
+
 document.addEventListener("visibilitychange", function() {
     if (document.hidden && isExamActive) {
         alert("⚠️ SECURITY WARNING: Tab switching detected! Your exam has been automatically submitted.");
@@ -100,6 +142,7 @@ document.addEventListener("visibilitychange", function() {
 auth.onAuthStateChanged((user) => {
     if (user) {
         routeUserDashboard(user.uid);
+        resetInactivityTimer();
     } else {
         showLoggedOutUI();
     }
@@ -129,8 +172,12 @@ function toggleSidebar() {
     const sidebar = document.getElementById('appSidebar');
     const overlay = document.getElementById('sidebarOverlay');
     if (sidebar && overlay) {
-        sidebar.classList.toggle('hidden');
-        overlay.classList.toggle('hidden');
+        sidebar.classList.toggle('active-mobile-drawer');
+        if (sidebar.classList.contains('active-mobile-drawer')) {
+            overlay.classList.remove('hidden');
+        } else {
+            overlay.classList.add('hidden');
+        }
     }
 }
 
@@ -170,6 +217,13 @@ function toggleSignupRoleFields() {
     }
 }
 
+function openContactAdminModal() {
+    document.getElementById('contactAdminModal').classList.remove('hidden');
+}
+function closeContactAdminModal() {
+    document.getElementById('contactAdminModal').classList.add('hidden');
+}
+
 function routeUserDashboard(uid) {
     db.collection('users').doc(uid).get().then((doc) => {
         let username = "User";
@@ -195,7 +249,7 @@ function routeUserDashboard(uid) {
         }
 
         updateDashboardCounters();
-        renderHomeAnalyticsChart(uid);
+        fetchAllUsersList('ALL');
         showView('viewHome');
     });
 }
@@ -255,7 +309,7 @@ function launchExamMode(examType) {
 
     if (examType === 'JAMB') {
         bannerTitle.innerText = "JAMB Unified Tertiary Matriculation Examination (UTME) Simulator";
-        bannerRules.innerText = "Computer-Based Test featuring Use of English (compulsory: 60 Qs) and 3 chosen academic subjects (40 Qs each).";
+        bannerRules.innerText = "Computer-Based Test featuring Use of English (60 Qs) and 3 chosen academic subjects (40 Qs each). Total 180 Qs.";
         if (subjectSelectorArea) subjectSelectorArea.style.display = 'none';
         if (modesContainer) modesContainer.style.display = 'flex';
         chosenDurationMinutes = 120;
@@ -263,7 +317,7 @@ function launchExamMode(examType) {
         generateJAMBSubjects();
     } else {
         bannerTitle.innerText = `${examType} Senior School Certificate Examination Simulator`;
-        bannerRules.innerText = `Select your preferred subjects (50 questions per subject, 1 hour per subject).`;
+        bannerRules.innerText = `Select your preferred subjects (50 questions per subject). Total questions and time adjust dynamically.`;
         if (subjectSelectorArea) subjectSelectorArea.style.display = 'block';
         if (modesContainer) modesContainer.style.display = 'flex';
         const sc = document.getElementById('subjectCountSelect');
@@ -287,7 +341,7 @@ function fetchAvailableSubjectsForExam(examType) {
           snapshot.forEach(doc => {
               if (doc.data().subject) subsSet.add(doc.data().subject);
           });
-          availableExamSubjects = Array.from(subsSet);
+          availableExamSubjects = Array.from(subsSet).sort();
       });
 }
 
@@ -303,14 +357,16 @@ function generateJAMBSubjects() {
 
     container.innerHTML = `
         <div style="padding: 10px; background: var(--naija-green-light); border: 1px solid #bbf7d0; border-radius: 6px; font-size: 0.85rem; font-weight: bold; color: var(--naija-green-dark); margin-bottom: 8px;">
-            Subject 1: Use of English (Compulsory - 60 Questions)
+            Subject 1: Use of English (Compulsory - Questions 1 to 60)
         </div>
     `;
 
     for (let i = 2; i <= 4; i++) {
+        let startQ = 61 + (i - 2) * 40;
+        let endQ = startQ + 39;
         container.innerHTML += `
             <div style="margin-bottom: 8px;">
-                <label class="form-label">Subject ${i} (40 Questions)</label>
+                <label class="form-label">Subject ${i} (Questions ${startQ} to ${endQ})</label>
                 <select class="form-select subject-picker" onchange="checkProceedExamButton()">${options}</select>
             </div>
         `;
@@ -332,9 +388,11 @@ function generateSubjectDropdowns() {
     });
 
     for (let i = 1; i <= count; i++) {
+        let startQ = 1 + (i - 1) * 50;
+        let endQ = i * 50;
         container.innerHTML += `
             <div style="margin-bottom: 8px;">
-                <label class="form-label">Subject ${i} (50 Questions - 1 Hour)</label>
+                <label class="form-label">Subject ${i} (Questions ${startQ} to ${endQ})</label>
                 <select class="form-select subject-picker" onchange="checkProceedExamButton()">${options}</select>
             </div>
         `;
@@ -418,13 +476,22 @@ function launchStandaloneExam() {
 
     let selectedSubjects = [];
     if (currentSelectedExamType === 'JAMB') {
-        selectedSubjects.push({ subject: "Use of English", count: (chosenDurationMinutes === 40 ? 20 : 60) });
+        selectedSubjects.push({ subject: "Use of English", count: (chosenDurationMinutes === 40 ? 20 : 60), startIdx: 0 });
+        let currentOffset = (chosenDurationMinutes === 40 ? 20 : 60);
         document.querySelectorAll('.subject-picker').forEach(sel => {
-            if(sel.value) selectedSubjects.push({ subject: sel.value, count: (chosenDurationMinutes === 40 ? 10 : 40) });
+            if(sel.value) {
+                let cnt = (chosenDurationMinutes === 40 ? 10 : 40);
+                selectedSubjects.push({ subject: sel.value, count: cnt, startIdx: currentOffset });
+                currentOffset += cnt;
+            }
         });
     } else {
+        let currentOffset = 0;
         document.querySelectorAll('.subject-picker').forEach(sel => {
-            if(sel.value) selectedSubjects.push({ subject: sel.value, count: 50 });
+            if(sel.value) {
+                selectedSubjects.push({ subject: sel.value, count: 50, startIdx: currentOffset });
+                currentOffset += 50;
+            }
         });
         chosenDurationMinutes = selectedSubjects.length * 60;
     }
@@ -457,7 +524,7 @@ function launchStandaloneExam() {
               assembledPaper = assembledPaper.concat(sliced);
           });
 
-          currentExamQuestions = shuffleArray(assembledPaper);
+          currentExamQuestions = assembledPaper;
           renderSubjectTabs(selectedSubjects);
           renderQuestionPalette();
           displayCurrentQuestion();
@@ -475,7 +542,7 @@ function renderSubjectTabs(subjects) {
     container.innerHTML = '';
     subjects.forEach((subObj, idx) => {
         container.innerHTML += `
-            <button onclick="jumpToSubject('${subObj.subject}')" class="cbt-subject-tab ${idx === 0 ? 'active' : ''}">${subObj.subject}</button>
+            <button onclick="jumpToSubjectStart('${subObj.subject}', ${subObj.startIdx})" id="cbtSubjectTab_${idx}" class="cbt-subject-tab ${idx === 0 ? 'active' : ''}">${subObj.subject}</button>
         `;
     });
 }
@@ -492,6 +559,14 @@ function displayCurrentQuestion() {
     if (numLabel) numLabel.innerText = `Question ${currentQuestionIndex + 1} of ${currentExamQuestions.length}`;
     if (subjectTitle) subjectTitle.innerText = q.subject;
     if (metaText) metaText.innerText = `${q.examType || currentSelectedExamType} • Year: ${q.year || 2026} • Question #${currentQuestionIndex + 1}`;
+
+    document.querySelectorAll('.cbt-subject-tab').forEach(tabBtn => {
+        if (tabBtn.innerText.trim() === q.subject) {
+            tabBtn.classList.add('active');
+        } else {
+            tabBtn.classList.remove('active');
+        }
+    });
 
     let imgHtml = q.imageUrl ? `<div style="margin-bottom:12px;"><img src="${q.imageUrl}" style="max-width:100%; max-height:220px; border-radius:6px; border:1px solid var(--border-color);"></div>` : '';
     if (bodyText) {
@@ -578,12 +653,14 @@ function jumpToQuestion(idx) {
     displayCurrentQuestion();
 }
 
-function jumpToSubject(subjectName) {
-    const targetIdx = currentExamQuestions.findIndex(q => q.subject === subjectName);
-    if (targetIdx !== -1) {
-        currentQuestionIndex = targetIdx;
-        displayCurrentQuestion();
+function jumpToSubjectStart(subjectName, startIdx) {
+    if (startIdx !== undefined && startIdx < currentExamQuestions.length) {
+        currentQuestionIndex = startIdx;
+    } else {
+        const targetIdx = currentExamQuestions.findIndex(q => q.subject === subjectName);
+        if (targetIdx !== -1) currentQuestionIndex = targetIdx;
     }
+    displayCurrentQuestion();
 }
 
 function startTimer(seconds) {
@@ -620,7 +697,6 @@ function closeStandaloneCbtWindow() {
     }
 }
 
-// Enlarged Calculator
 function toggleCBTCalculator() {
     const calcBox = document.getElementById('cbtCalculatorBox');
     if (calcBox) calcBox.classList.toggle('hidden');
@@ -684,12 +760,14 @@ function submitExamManually() {
         }
 
         reviewHTML += `
-            <div style="padding: 10px; border-bottom: 1px solid var(--border-color); font-size: 0.85rem;">
-                <p style="font-weight: bold; color: ${isCorrect ? 'var(--naija-green)' : '#dc2626'};">
+            <div style="padding: 12px; border-bottom: 1px solid var(--border-color); font-size: 0.88rem; background: var(--card-bg); margin-bottom: 6px; border-radius: 6px;">
+                <p style="font-weight: bold; color: ${isCorrect ? 'var(--naija-green)' : '#dc2626'}; margin-bottom: 4px;">
                     ${idx + 1}. [${q.subject}] ${q.questionText} (${isCorrect ? 'Correct ✓' : 'Incorrect ✗'})
                 </p>
-                <p style="margin-top: 2px;">Your Answer: <b>${userChoice}</b> | Correct Answer: <b style="color: var(--naija-green);">${q.correctOption}</b></p>
-                <p style="font-size: 0.8rem; font-style: italic; margin-top: 4px;">💡 Explanation: ${q.explanation || 'No explanation provided.'}</p>
+                <p style="margin-bottom: 4px;">Option Picked: <b style="color: ${isCorrect ? 'var(--naija-green)' : '#dc2626'};">${userChoice}</b> | Correct Option: <b style="color: var(--naija-green);">${q.correctOption}</b></p>
+                <div style="background: var(--bg-gray); padding: 8px 12px; border-radius: 6px; font-size: 0.8rem; margin-top: 6px;">
+                    <b style="color: var(--naija-green);"><i class="fa-solid fa-lightbulb"></i> Explanation:</b> ${q.explanation || 'No detailed explanation provided.'}
+                </div>
             </div>
         `;
     });
@@ -702,14 +780,13 @@ function submitExamManually() {
     let gradeStatusText = "";
 
     if (currentSelectedExamType === 'JAMB') {
-        let maxScale = (chosenDurationMinutes === 40) ? 200 : 400;
-        finalScaledScore = Math.round((totalCorrect / (totalQuestions || 1)) * maxScale);
-        document.getElementById('resTotalScore').innerText = `${finalScaledScore} / ${maxScale}`;
-        document.getElementById('resScoreHeaderLabel').innerText = `JAMB SCORE (/${maxScale})`;
+        finalScaledScore = Math.round((totalCorrect / (totalQuestions || 1)) * 400);
+        document.getElementById('resTotalScore').innerText = `${finalScaledScore} / 400`;
+        document.getElementById('resScoreHeaderLabel').innerText = `JAMB SCORE (/400)`;
         gradeStatusText = finalScaledScore >= 200 ? "PASSED (ADMISSIBLE)" : "NEEDS IMPROVEMENT";
     } else {
         let overallGradeObj = getWaecNecoGrade(percentage);
-        document.getElementById('resTotalScore').innerText = `${totalCorrect} / ${totalQuestions} (${percentage}%)`;
+        document.getElementById('resTotalScore').innerText = `${overallGradeObj.grade} (${percentage}%)`;
         document.getElementById('resScoreHeaderLabel').innerText = `${currentSelectedExamType} SCORE / GRADE`;
         gradeStatusText = `${overallGradeObj.grade} - ${overallGradeObj.remark} (${overallGradeObj.status})`;
     }
@@ -769,12 +846,9 @@ function saveExamResultToFirestore(examType, percentage, score, total, scaledSco
         subjectStats: subjectStats,
         timeUsed: timeUsedStr,
         timestamp: new Date()
-    }).then(() => {
-        renderHomeAnalyticsChart(uid);
     });
 }
 
-// Grouped Exam History & Profile Viewer
 function showExamHistoryView() {
     showView('viewHistory');
     const container = document.getElementById('examHistoryListContainer');
@@ -782,131 +856,61 @@ function showExamHistoryView() {
     container.innerHTML = `<p style="color: var(--text-muted);">Loading exam records & student history...</p>`;
 
     if (!auth.currentUser) return;
+    const currentUid = auth.currentUser.uid;
 
-    db.collection('users').orderBy('username', 'asc').get().then(userSnap => {
-        db.collection('exam_results').orderBy('timestamp', 'desc').get().then(resSnap => {
-            let resultsMap = {};
-            resSnap.forEach(doc => {
-                let r = doc.data();
-                if (!resultsMap[r.userId]) resultsMap[r.userId] = [];
-                resultsMap[r.userId].push(r);
-            });
+    db.collection('exam_results').where('userId', '==', currentUid).orderBy('timestamp', 'desc').get().then(snapshot => {
+        if (snapshot.empty) {
+            container.innerHTML = `<p style="color: var(--text-muted);">No exam records logged yet.</p>`;
+            return;
+        }
 
-            if (userSnap.empty) {
-                container.innerHTML = `<p style="color: var(--text-muted);">No users found.</p>`;
-                return;
-            }
+        let html = `<div style="display: flex; flex-direction: column; gap: 8px;">`;
 
-            let html = `
-                <div style="margin-bottom: 16px;">
-                    <h4 style="color: var(--naija-green); margin-bottom: 4px;"><i class="fa-solid fa-graduation-cap"></i> Student Examination History & Performance</h4>
-                    <p style="font-size: 0.8rem; color: var(--text-muted);">Grouped user records with exam logs, time used, and performance corrections.</p>
-                </div>
-                <div style="display: flex; flex-direction: column; gap: 12px; max-height: 550px; overflow-y: auto;">
-            `;
+        snapshot.forEach(doc => {
+            let res = doc.data();
+            let dateStr = res.timestamp ? new Date(res.timestamp.toDate()).toLocaleString() : 'Recent';
+            let formattedScore = res.examType === 'JAMB' ? `${res.scaledScore} / 400` : `${getWaecNecoGrade(res.percentage).grade} (${res.percentage}%)`;
 
-            userSnap.forEach(doc => {
-                let u = doc.data();
-                let uId = doc.id;
-                let userExams = resultsMap[uId] || [];
-                let passportPreview = u.passportUrl 
-                    ? `<img src="${u.passportUrl}" style="width: 44px; height: 44px; border-radius: 50%; object-fit: cover; border: 2px solid var(--naija-green);">` 
-                    : `<div style="width: 44px; height: 44px; background: var(--naija-green-light); color: var(--naija-green); border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: bold;"><i class="fa-solid fa-user"></i></div>`;
-
-                let examsListHtml = '';
-                if (userExams.length === 0) {
-                    examsListHtml = `<p style="font-size: 0.75rem; color: var(--text-muted); font-style: italic; margin-top: 4px;">No past exam sessions recorded.</p>`;
-                } else {
-                    userExams.forEach(ex => {
-                        let dateStr = ex.timestamp ? new Date(ex.timestamp.toDate()).toLocaleString() : 'Recent';
-                        examsListHtml += `
-                            <div style="background: var(--bg-gray); padding: 8px 10px; border-radius: 6px; margin-top: 4px; display: flex; justify-content: space-between; align-items: center; font-size: 0.8rem;">
-                                <div>
-                                    <b>${ex.examType}</b> • Score: <b>${ex.score} / ${ex.total} (${ex.percentage}%)</b>
-                                    <br><span style="font-size: 0.7rem; color: var(--text-muted);">Time Used: ${ex.timeUsed || 'N/A'} | ${dateStr}</span>
-                                </div>
-                                <span style="font-weight: bold; color: ${ex.percentage >= 50 ? 'var(--naija-green)' : '#dc2626'};">${ex.percentage}%</span>
-                            </div>
-                        `;
-                    });
-                }
-
-                html += `
-                    <div style="background: var(--card-bg); padding: 14px; border-radius: 8px; border: 1px solid var(--border-color);">
-                        <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; margin-bottom: 8px;">
-                            <div style="display: flex; align-items: center; gap: 12px;">
-                                ${passportPreview}
-                                <div>
-                                    <h4 style="font-size: 0.95rem; color: var(--text-color); margin-bottom: 2px;">${u.teacherTitle ? u.teacherTitle + ' ' : ''}${u.username} (${u.role.toUpperCase()})</h4>
-                                    <p style="font-size: 0.75rem; color: var(--text-muted);">Class: <b>${u.assignedClass || 'None'}</b> | Email: <b>${u.email}</b> | Phone: <b>${u.phone || 'N/A'}</b></p>
-                                </div>
-                            </div>
-                            <button onclick="openProfileModal('${uId}')" class="primary-btn" style="padding: 6px 12px; font-size: 0.8rem;"><i class="fa-solid fa-address-card"></i> View Full Profile</button>
-                        </div>
-                        <div style="border-top: 1px solid var(--border-color); padding-top: 8px;">
-                            <b style="font-size: 0.8rem; color: var(--naija-green);">Exam Sessions & History (${userExams.length}):</b>
-                            ${examsListHtml}
-                        </div>
+            html += `
+                <div style="background: var(--card-bg); padding: 12px 16px; border-radius: 8px; border: 1px solid var(--border-color); display: flex; justify-content: space-between; align-items: center; font-size: 0.85rem; flex-wrap: wrap; gap: 8px;">
+                    <div>
+                        <b>${res.examType} Exam Session</b> • Score: <b style="color: var(--naija-green);">${formattedScore}</b><br>
+                        <span style="font-size: 0.75rem; color: var(--text-muted);">Completed in ${res.timeUsed || 'N/A'} on ${dateStr}</span>
                     </div>
-                `;
-            });
-            html += `</div>`;
-            container.innerHTML = html;
+                    <button onclick="inspectPastExamSlip('${doc.id}')" class="primary-btn" style="padding: 4px 10px; font-size: 0.8rem;"><i class="fa-solid fa-eye"></i> View Slip</button>
+                </div>
+            `;
         });
+        html += `</div>`;
+        container.innerHTML = html;
     });
 }
 
-function renderHomeAnalyticsChart(uid) {
-    db.collection('exam_results')
-      .where('userId', '==', uid)
-      .orderBy('timestamp', 'asc')
-      .get()
-      .then(snapshot => {
-          let labels = [];
-          let dataPoints = [];
-          let count = 1;
-
-          snapshot.forEach(doc => {
-              let res = doc.data();
-              labels.push(`Test ${count++} (${res.examType})`);
-              dataPoints.push(res.percentage);
-          });
-
-          if (dataPoints.length === 0) {
-              labels = ['No tests yet'];
-              dataPoints = [0];
-          }
-
-          const canvas = document.getElementById('homeAnalyticsChart');
-          if (!canvas) return;
-          const ctx = canvas.getContext('2d');
-          if (homeChartInstance) homeChartInstance.destroy();
-
-          homeChartInstance = new Chart(ctx, {
-              type: 'bar',
-              data: {
-                  labels: labels,
-                  datasets: [{
-                      label: 'Past Scores (%)',
-                      data: dataPoints,
-                      backgroundColor: '#008751',
-                      borderRadius: 6
-                  }]
-              },
-              options: {
-                  responsive: true,
-                  maintainAspectRatio: false,
-                  scales: {
-                      y: { beginAtZero: true, max: 100 }
-                  }
-              }
-          });
-      });
+function inspectPastExamSlip(resId) {
+    db.collection('exam_results').doc(resId).get().then(doc => {
+        if (doc.exists) {
+            let res = doc.data();
+            document.getElementById('overallPercentageBadge').innerText = `${res.percentage}%`;
+            document.getElementById('resultsTimestamp').innerText = `Logged on ${res.timestamp ? new Date(res.timestamp.toDate()).toLocaleString() : 'Past Session'}`;
+            
+            if (res.examType === 'JAMB') {
+                document.getElementById('resTotalScore').innerText = `${res.scaledScore} / 400`;
+                document.getElementById('resScoreHeaderLabel').innerText = `JAMB SCORE (/400)`;
+                document.getElementById('resGradeStatus').innerText = res.scaledScore >= 200 ? "PASSED (ADMISSIBLE)" : "NEEDS IMPROVEMENT";
+            } else {
+                let gObj = getWaecNecoGrade(res.percentage);
+                document.getElementById('resTotalScore').innerText = `${gObj.grade} (${res.percentage}%)`;
+                document.getElementById('resScoreHeaderLabel').innerText = `${res.examType} SCORE / GRADE`;
+                document.getElementById('resGradeStatus').innerText = `${gObj.grade} - ${gObj.remark}`;
+            }
+            
+            document.getElementById('standaloneResultsWindow').classList.remove('hidden');
+        }
+    });
 }
 
-// Admin Tab Switching & Management
 function switchAdminTab(tab) {
-    const panels = ['Classes', 'Teachers', 'Students', 'Users', 'Questions', 'Videos', 'Results'];
+    const panels = ['Classes', 'Teachers', 'Students', 'Questions', 'Videos', 'Results'];
     panels.forEach(p => {
         const panelEl = document.getElementById(`adminPanel${p}`);
         const btnEl = document.getElementById(`adminTabBtn${p}`);
@@ -924,7 +928,6 @@ function switchAdminTab(tab) {
     if (tab === 'classes') fetchClassesList();
     if (tab === 'teachers') { populateClassDropdowns(); fetchTeachersList(); }
     if (tab === 'students') { populateClassDropdowns(); fetchStudentsList(); }
-    if (tab === 'users') fetchAllUsersList('ALL');
     if (tab === 'questions') fetchQuestionsForManagement('JAMB');
     if (tab === 'videos') fetchAdminVideos();
     if (tab === 'results') { populateClassDropdowns(); fetchAdminResultsLog(); }
@@ -933,7 +936,12 @@ function switchAdminTab(tab) {
 function fetchAllUsersList(filterType) {
     const container = document.getElementById('allUsersListContainer');
     if (!container) return;
-    container.innerHTML = `<p style="color: var(--text-muted); font-size: 0.85rem;">Loading users directory...</p>`;
+    container.innerHTML = `<p style="color: var(--text-muted); font-size: 0.85rem;">Loading user directory...</p>`;
+
+    ['All', 'Active', 'Inactive'].forEach(f => {
+        const btn = document.getElementById(`userFilter${f}Btn`);
+        if (btn) btn.className = f.toLowerCase() === filterType ? "admin-tab-btn active" : "admin-tab-btn";
+    });
 
     db.collection('users').orderBy('username', 'asc').get().then(snapshot => {
         if (snapshot.empty) {
@@ -942,6 +950,8 @@ function fetchAllUsersList(filterType) {
         }
 
         let html = '';
+        let count = 0;
+
         snapshot.forEach(doc => {
             let u = doc.data();
             let isActive = u.isRegisteredByAdmin || u.role === 'admin';
@@ -949,78 +959,76 @@ function fetchAllUsersList(filterType) {
             if (filterType === 'active' && !isActive) return;
             if (filterType === 'inactive' && isActive) return;
 
+            count++;
+            let passportPreview = u.passportUrl 
+                ? `<img src="${u.passportUrl}" style="width: 34px; height: 34px; border-radius: 50%; object-fit: cover; border: 1px solid var(--naija-green);">` 
+                : `<div style="width: 34px; height: 34px; background: var(--naija-green-light); color: var(--naija-green); border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 0.8rem;"><i class="fa-solid fa-user"></i></div>`;
+
             html += `
                 <div style="background: var(--card-bg); padding: 10px 14px; border-radius: 6px; margin-bottom: 6px; border: 1px solid var(--border-color); display: flex; justify-content: space-between; align-items: center; font-size: 0.85rem; flex-wrap: wrap; gap: 8px;">
-                    <div>
-                        <b>${u.username}</b> (${u.email}) | Role: <b>${u.role.toUpperCase()}</b> | Class: <b>${u.assignedClass || 'None'}</b>
+                    <div style="display: flex; align-items: center; gap: 10px;">
+                        ${passportPreview}
+                        <div>
+                            <b>${u.username}</b> (${u.email})<br>
+                            <span style="font-size: 0.75rem; color: var(--text-muted);">Role: <b>${u.role.toUpperCase()}</b> | Class: <b>${u.assignedClass || 'None'}</b> | Phone: <b>${u.phone || 'N/A'}</b></span>
+                        </div>
                     </div>
-                    <span style="font-size: 0.75rem; padding: 2px 8px; border-radius: 4px; background: ${isActive ? 'var(--naija-green-light)' : '#fee2e2'}; color: ${isActive ? 'var(--naija-green-dark)' : '#dc2626'}; font-weight: bold;">
-                        ${isActive ? 'Active' : 'Inactive'}
-                    </span>
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                        <span style="font-size: 0.75rem; padding: 2px 8px; border-radius: 4px; background: ${isActive ? 'var(--naija-green-light)' : '#fee2e2'}; color: ${isActive ? 'var(--naija-green-dark)' : '#dc2626'}; font-weight: bold;">
+                            ${isActive ? 'Active' : 'Inactive'}
+                        </span>
+                        <button onclick="openProfileModal('${doc.id}')" class="primary-btn" style="padding: 4px 8px; font-size: 0.75rem;"><i class="fa-solid fa-address-card"></i> View Profile</button>
+                    </div>
                 </div>
             `;
         });
-        container.innerHTML = html || `<p style="color: var(--text-muted); font-size: 0.85rem;">No users match this filter.</p>`;
+        container.innerHTML = count > 0 ? html : `<p style="color: var(--text-muted); font-size: 0.85rem;">No users match this filter.</p>`;
     });
 }
 
 function fetchAdminResultsLog() {
     const container = document.getElementById('adminResultsLog');
-    const classFilter = document.getElementById('filterResultClass') ? document.getElementById('filterResultClass').value : 'ALL';
     if (!container) return;
     container.innerHTML = `<p style="color: var(--text-muted); font-size: 0.85rem;">Loading student results log...</p>`;
 
-    db.collection('users').orderBy('username', 'asc').get().then(userSnap => {
-        let userMap = {};
-        userSnap.forEach(doc => { userMap[doc.id] = doc.data(); });
+    db.collection('exam_results').orderBy('timestamp', 'desc').get().then(snapshot => {
+        if (snapshot.empty) {
+            container.innerHTML = `<p style="color: var(--text-muted); font-size: 0.9rem;">No student scores recorded yet.</p>`;
+            return;
+        }
 
-        db.collection('exam_results').orderBy('timestamp', 'desc').get().then(snapshot => {
-            if (snapshot.empty) {
-                container.innerHTML = `<p style="color: var(--text-muted); font-size: 0.9rem;">No student scores recorded yet.</p>`;
-                return;
-            }
+        let html = `<div style="display: flex; flex-direction: column; gap: 8px; max-height: 450px; overflow-y: auto;">`;
+        snapshot.forEach(doc => {
+            let res = doc.data();
+            let dateStr = res.timestamp ? new Date(res.timestamp.toDate()).toLocaleString() : 'Recent';
+            let formattedScore = res.examType === 'JAMB' ? `${res.scaledScore} / 400` : `${getWaecNecoGrade(res.percentage).grade} (${res.percentage}%)`;
 
-            let resultsArray = [];
-            snapshot.forEach(doc => {
-                let res = doc.data();
-                let userObj = userMap[res.userId] || { username: "Unknown User", email: "", assignedClass: "Unassigned", passportUrl: "" };
-                resultsArray.push({ id: doc.id, ...res, user: userObj });
-            });
-
-            resultsArray.sort((a, b) => a.user.username.localeCompare(b.user.username));
-
-            let html = `<div style="display: flex; flex-direction: column; gap: 8px; max-height: 450px; overflow-y: auto;">`;
-            let filteredCount = 0;
-
-            resultsArray.forEach(res => {
-                let assignedClass = res.user.assignedClass || 'None';
-                if (classFilter !== 'ALL' && assignedClass !== classFilter) return;
-
-                filteredCount++;
-                let passportPreview = res.user.passportUrl 
-                    ? `<img src="${res.user.passportUrl}" style="width: 32px; height: 32px; border-radius: 50%; object-fit: cover; border: 1px solid var(--naija-green);">` 
-                    : `<div style="width: 32px; height: 32px; background: var(--naija-green-light); color: var(--naija-green); border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 0.8rem;"><i class="fa-solid fa-user"></i></div>`;
-
-                html += `
-                    <div style="background: var(--card-bg); padding: 10px 14px; border-radius: 6px; border: 1px solid var(--border-color); display: flex; justify-content: space-between; align-items: center; font-size: 0.85rem; flex-wrap: wrap; gap: 8px;">
-                        <div style="display: flex; align-items: center; gap: 10px;">
-                            ${passportPreview}
-                            <div>
-                                <b>${res.user.username}</b> (${assignedClass})<br>
-                                <span style="font-size: 0.75rem; color: var(--text-muted);">Exam: ${res.examType} | Score: <b>${res.score} / ${res.total}</b></span>
-                            </div>
-                        </div>
-                        <div style="display: flex; align-items: center; gap: 10px;">
-                            <span style="font-weight: bold; color: ${res.percentage >= 50 ? 'var(--naija-green)' : '#dc2626'};">${res.percentage}%</span>
-                            <button onclick="openProfileModal('${res.userId}')" class="primary-btn" style="padding: 4px 8px; font-size: 0.75rem;"><i class="fa-solid fa-eye"></i> View Profile</button>
-                        </div>
+            html += `
+                <div style="background: var(--card-bg); padding: 10px 14px; border-radius: 6px; border: 1px solid var(--border-color); display: flex; justify-content: space-between; align-items: center; font-size: 0.85rem; flex-wrap: wrap; gap: 8px;">
+                    <div>
+                        <b>${res.examType} Exam Session Log</b><br>
+                        <span style="font-size: 0.75rem; color: var(--text-muted);">Score: <b>${formattedScore}</b> | Time: ${res.timeUsed || 'N/A'} | Logged: ${dateStr}</span>
                     </div>
-                `;
-            });
-            html += `</div>`;
-            container.innerHTML = filteredCount > 0 ? html : `<p style="color: var(--text-muted); font-size: 0.85rem;">No results found for this class filter.</p>`;
+                    <button onclick="inspectPastExamSlip('${doc.id}')" class="primary-btn" style="padding: 4px 8px; font-size: 0.75rem;"><i class="fa-solid fa-eye"></i> View Slip</button>
+                </div>
+            `;
         });
+        html += `</div>`;
+        container.innerHTML = html;
     });
+}
+
+function clearAllResultsLog() {
+    if (confirm("Are you sure you want to clear all exam result logs?")) {
+        db.collection('exam_results').get().then(snapshot => {
+            const batch = db.batch();
+            snapshot.forEach(doc => batch.delete(doc.ref));
+            return batch.commit();
+        }).then(() => {
+            alert("Results log cleared successfully!");
+            fetchAdminResultsLog();
+        });
+    }
 }
 
 function createNewClass() {
@@ -1049,6 +1057,9 @@ function fetchClassesList() {
     container.innerHTML = `<p style="color: var(--text-muted); font-size: 0.85rem;">Loading classes...</p>`;
 
     db.collection('classes').orderBy('createdAt', 'desc').get().then(snapshot => {
+        const header = document.getElementById('classesCountHeader');
+        if (header) header.innerText = `All Created Classes & Rosters (${snapshot.size})`;
+
         if (snapshot.empty) {
             container.innerHTML = `<p style="color: var(--text-muted); font-size: 0.85rem;">No custom classes created yet.</p>`;
             return;
@@ -1124,7 +1135,6 @@ function populateClassDropdowns() {
         let editSelect = document.getElementById('editProfileClass');
         let filterTSelect = document.getElementById('filterTeacherClass');
         let filterSSelect = document.getElementById('filterStudentClass');
-        let filterRSelect = document.getElementById('filterResultClass');
         
         let optionsHtml = '<option value="">-- Select Available Class --</option>';
         let reoptionsHtml = '<option value="None">-- Unassigned / None --</option>';
@@ -1143,7 +1153,6 @@ function populateClassDropdowns() {
         if (editSelect) editSelect.innerHTML = reoptionsHtml;
         if (filterTSelect && filterTSelect.options.length <= 1) filterTSelect.innerHTML = filterOptionsHtml;
         if (filterSSelect && filterSSelect.options.length <= 1) filterSSelect.innerHTML = filterOptionsHtml;
-        if (filterRSelect && filterRSelect.options.length <= 1) filterRSelect.innerHTML = filterOptionsHtml;
     });
 }
 
@@ -1154,6 +1163,9 @@ function fetchTeachersList() {
     container.innerHTML = `<p style="color: var(--text-muted); font-size: 0.85rem;">Loading teachers...</p>`;
 
     db.collection('users').where('role', '==', 'teacher').get().then(teacherSnap => {
+        const header = document.getElementById('teachersCountHeader');
+        if (header) header.innerText = `All Registered Teachers (${teacherSnap.size})`;
+
         if (teacherSnap.empty) {
             container.innerHTML = `<p style="color: var(--text-muted); font-size: 0.85rem;">No teachers registered yet.</p>`;
             return;
@@ -1170,7 +1182,7 @@ function fetchTeachersList() {
                 <div style="display: flex; justify-content: space-between; align-items: center; background: var(--card-bg); padding: 8px 12px; border-radius: 6px; margin-bottom: 6px; border: 1px solid var(--border-color); font-size: 0.85rem; flex-wrap: wrap; gap: 8px;">
                     <div>
                         <i class="fa-solid fa-user" style="color:var(--naija-green); margin-right:6px;"></i><b>${titlePrefix}${t.username}</b> (${t.email})<br>
-                        <span style="color: var(--text-muted); font-size: 0.75rem;">Class: <b>${assignedClass}</b></span>
+                        <span style="color: var(--text-muted); font-size: 0.75rem;">Class: <b>${assignedClass}</b> | Phone: <b>${t.phone || 'N/A'}</b></span>
                     </div>
                     <div style="display: flex; gap: 6px;">
                         <button onclick="openProfileModal('${doc.id}')" class="primary-btn" style="padding: 4px 8px; font-size: 0.75rem;">Profile</button>
@@ -1187,11 +1199,12 @@ function preRegisterTeacher() {
     const title = document.getElementById('teacherTitleSelect').value;
     const name = document.getElementById('teacherNameInput').value.trim();
     const email = document.getElementById('teacherEmailInput').value.trim().toLowerCase();
+    const phone = document.getElementById('teacherPhoneInput').value.trim();
     const assignedClass = document.getElementById('teacherClassDropdownSelect').value;
     const gender = document.getElementById('teacherGenderSelect').value;
 
-    if (!name || !email) {
-        alert("Please enter teacher name and email.");
+    if (!name || !email || !phone) {
+        alert("Please enter teacher name, email, and phone number.");
         return;
     }
     if (!email.endsWith('@gmail.com')) {
@@ -1203,6 +1216,7 @@ function preRegisterTeacher() {
         teacherTitle: title,
         username: name,
         email: email,
+        phone: phone,
         role: 'teacher',
         assignedClass: assignedClass || 'None',
         gender: gender,
@@ -1212,6 +1226,7 @@ function preRegisterTeacher() {
         alert(`Teacher ${title} ${name} pre-registered successfully!`);
         document.getElementById('teacherNameInput').value = '';
         document.getElementById('teacherEmailInput').value = '';
+        document.getElementById('teacherPhoneInput').value = '';
         fetchTeachersList();
         updateDashboardCounters();
     });
@@ -1226,6 +1241,56 @@ function deleteTeacherAccount(docId) {
     }
 }
 
+function downloadTeacherCSVTemplate() {
+    let csvContent = "teacher_title,username,email,phone,assignedClass,gender\nMr.,John Doe,john.doe@gmail.com,08012345678,SS 3 Gold,Male\n";
+    let blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    let url = URL.createObjectURL(blob);
+    let link = document.createElement("a");
+    link.setAttribute("href", url);
+    link.setAttribute("download", `elsa_teachers_template.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+}
+
+function parseTeacherCSV() {
+    const fileInput = document.getElementById('teacherCsvFileInput');
+    if (!fileInput || fileInput.files.length === 0) { alert("Select CSV file first."); return; }
+    const reader = new FileReader();
+    reader.onload = function(e) {
+        const text = e.target.result;
+        const lines = text.split('\n').filter(l => l.trim() !== '');
+        if (lines.length < 2) return;
+        const batch = db.batch();
+        let count = 0;
+        for (let i = 1; i < lines.length; i++) {
+            const row = lines[i].split(',').map(c => c.trim());
+            if (row.length >= 4) {
+                let docRef = db.collection('users').doc();
+                batch.set(docRef, {
+                    teacherTitle: row[0] || 'Mr.',
+                    username: row[1],
+                    email: row[2].toLowerCase(),
+                    phone: row[3] || 'N/A',
+                    assignedClass: row[4] || 'None',
+                    gender: row[5] || 'Male',
+                    role: 'teacher',
+                    isRegisteredByAdmin: true,
+                    createdAt: new Date()
+                });
+                count++;
+            }
+        }
+        batch.commit().then(() => {
+            alert(`Uploaded ${count} teachers successfully!`);
+            fileInput.value = '';
+            fetchTeachersList();
+            updateDashboardCounters();
+        });
+    };
+    reader.readAsText(fileInput.files[0]);
+}
+
 function fetchStudentsList() {
     const container = document.getElementById('studentsListContainer');
     if (!container) return;
@@ -1233,6 +1298,9 @@ function fetchStudentsList() {
     container.innerHTML = `<p style="color: var(--text-muted); font-size: 0.85rem;">Loading students...</p>`;
 
     db.collection('users').where('role', '==', 'student').get().then(snapshot => {
+        const header = document.getElementById('studentsCountHeader');
+        if (header) header.innerText = `All Registered Students (${snapshot.size})`;
+
         if (snapshot.empty) {
             container.innerHTML = `<p style="color: var(--text-muted); font-size: 0.85rem;">No students registered yet.</p>`;
             return;
@@ -1248,7 +1316,7 @@ function fetchStudentsList() {
                 <div style="display: flex; justify-content: space-between; align-items: center; background: var(--card-bg); padding: 8px 12px; border-radius: 6px; margin-bottom: 6px; border: 1px solid var(--border-color); font-size: 0.85rem; flex-wrap: wrap; gap: 8px;">
                     <div>
                         <i class="fa-solid fa-user" style="color:var(--naija-green); margin-right:6px;"></i><b>${s.username}</b> (${s.email})<br>
-                        <span style="color: var(--text-muted); font-size: 0.75rem;">Class: <b>${assignedClass}</b> | Track: <b>${s.examTrack || 'ALL'}</b></span>
+                        <span style="color: var(--text-muted); font-size: 0.75rem;">Class: <b>${assignedClass}</b> | Phone: <b>${s.phone || 'N/A'}</b> | Track: <b>${s.examTrack || 'ALL'}</b></span>
                     </div>
                     <div style="display: flex; gap: 6px;">
                         <button onclick="openProfileModal('${doc.id}')" class="primary-btn" style="padding: 4px 8px; font-size: 0.75rem;">Profile</button>
@@ -1264,12 +1332,13 @@ function fetchStudentsList() {
 function registerStudentByAdmin() {
     const name = document.getElementById('studentNameInput').value.trim();
     const email = document.getElementById('studentEmailInput').value.trim().toLowerCase();
+    const phone = document.getElementById('studentPhoneInput').value.trim();
     const studentClass = document.getElementById('studentClassDropdownSelect').value;
     const examTrack = document.getElementById('studentExamTrackSelect').value;
     const gender = document.getElementById('studentGenderSelect').value;
 
-    if (!name || !email || !studentClass) {
-        alert("Please fill in student name, email, and select class.");
+    if (!name || !email || !phone || !studentClass) {
+        alert("Please fill in student name, email, phone number, and select class.");
         return;
     }
     if (!email.endsWith('@gmail.com')) {
@@ -1280,6 +1349,7 @@ function registerStudentByAdmin() {
     db.collection('users').add({
         username: name,
         email: email,
+        phone: phone,
         role: 'student',
         assignedClass: studentClass,
         examTrack: examTrack,
@@ -1290,6 +1360,7 @@ function registerStudentByAdmin() {
         alert(`Student ${name} pre-registered successfully!`);
         document.getElementById('studentNameInput').value = '';
         document.getElementById('studentEmailInput').value = '';
+        document.getElementById('studentPhoneInput').value = '';
         fetchStudentsList();
         updateDashboardCounters();
     });
@@ -1302,6 +1373,56 @@ function deleteStudentAccount(docId) {
             updateDashboardCounters();
         });
     }
+}
+
+function downloadStudentCSVTemplate() {
+    let csvContent = "username,email,phone,assignedClass,examTrack,gender\nJane Doe,jane.doe@gmail.com,08098765432,SS 3 Gold,JAMB,Female\n";
+    let blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    let url = URL.createObjectURL(blob);
+    let link = document.createElement("a");
+    link.setAttribute("href", url);
+    link.setAttribute("download", `elsa_students_template.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+}
+
+function parseStudentCSV() {
+    const fileInput = document.getElementById('studentCsvFileInput');
+    if (!fileInput || fileInput.files.length === 0) { alert("Select CSV file first."); return; }
+    const reader = new FileReader();
+    reader.onload = function(e) {
+        const text = e.target.result;
+        const lines = text.split('\n').filter(l => l.trim() !== '');
+        if (lines.length < 2) return;
+        const batch = db.batch();
+        let count = 0;
+        for (let i = 1; i < lines.length; i++) {
+            const row = lines[i].split(',').map(c => c.trim());
+            if (row.length >= 4) {
+                let docRef = db.collection('users').doc();
+                batch.set(docRef, {
+                    username: row[0],
+                    email: row[1].toLowerCase(),
+                    phone: row[2] || 'N/A',
+                    assignedClass: row[3] || 'None',
+                    examTrack: row[4] || 'ALL',
+                    gender: row[5] || 'Female',
+                    role: 'student',
+                    isRegisteredByAdmin: true,
+                    createdAt: new Date()
+                });
+                count++;
+            }
+        }
+        batch.commit().then(() => {
+            alert(`Uploaded ${count} students successfully!`);
+            fileInput.value = '';
+            fetchStudentsList();
+            updateDashboardCounters();
+        });
+    };
+    reader.readAsText(fileInput.files[0]);
 }
 
 function openProfileModal(userId) {
@@ -1332,11 +1453,11 @@ function openProfileModal(userId) {
                 ${titleRow}
                 <p><b>Full Name:</b> <span>${u.username}</span></p>
                 <p><b>Gmail Address:</b> <span>${u.email}</span></p>
+                <p><b>Phone Number:</b> <span>${u.phone || 'N/A'}</span></p>
                 <p><b>Role:</b> <span>${u.role.toUpperCase()}</span></p>
                 <p><b>Assigned Class:</b> <span>${u.assignedClass || 'None'}</span></p>
                 <p><b>Gender:</b> <span>${u.gender || 'N/A'}</span></p>
                 ${trackRow}
-                <p><b>Registered On:</b> <span>${u.createdAt ? new Date(u.createdAt.toDate()).toLocaleDateString() : 'N/A'}</span></p>
             `;
             document.getElementById('profileModal').classList.remove('hidden');
         }
@@ -1344,7 +1465,18 @@ function openProfileModal(userId) {
 }
 function closeProfileModal() { document.getElementById('profileModal').classList.add('hidden'); }
 
-// Question Bank Management & CSV Upload with Image Support
+let tempQuestionImageBase64 = "";
+function convertQuestionImageToBase64(input) {
+    if (input.files && input.files[0]) {
+        let reader = new FileReader();
+        reader.onload = function(e) {
+            tempQuestionImageBase64 = e.target.result;
+            document.getElementById('singleImageUrl').value = tempQuestionImageBase64;
+        };
+        reader.readAsDataURL(input.files[0]);
+    }
+}
+
 function saveSingleQuestion() {
     const editId = document.getElementById('editQuestionId').value;
     const examType = document.getElementById('singleExamType').value;
@@ -1395,65 +1527,15 @@ function resetQuestionForm() {
     document.getElementById('singleOptC').value = '';
     document.getElementById('singleOptD').value = '';
     document.getElementById('singleExplanation').value = '';
+    document.getElementById('singleImageFileInput').value = '';
+    tempQuestionImageBase64 = "";
     document.getElementById('saveQuestionBtn').innerText = "Save Question to Firestore";
     document.getElementById('cancelEditBtn').classList.add('hidden');
 }
 
-function editQuestion(docId) {
-    db.collection('questions').doc(docId).get().then(doc => {
-        if (doc.exists) {
-            const q = doc.data();
-            document.getElementById('editQuestionId').value = doc.id;
-            document.getElementById('singleExamType').value = q.examType;
-            document.getElementById('singleSubject').value = q.subject;
-            document.getElementById('singleYear').value = q.year;
-            document.getElementById('singleQuestionText').value = q.questionText;
-            document.getElementById('singleImageUrl').value = q.imageUrl || '';
-            document.getElementById('singleOptA').value = q.options.A;
-            document.getElementById('singleOptB').value = q.options.B;
-            document.getElementById('singleOptC').value = q.options.C;
-            document.getElementById('singleOptD').value = q.options.D;
-            document.getElementById('singleCorrect').value = q.correctOption;
-            document.getElementById('singleExplanation').value = q.explanation;
-            
-            document.getElementById('saveQuestionBtn').innerText = "Update Question";
-            document.getElementById('cancelEditBtn').classList.remove('hidden');
-            window.scrollTo({ top: 0, behavior: 'smooth' });
-        }
-    });
-}
-
-function viewFullQuestion(docId) {
-    db.collection('questions').doc(docId).get().then(doc => {
-        if (doc.exists) {
-            const q = doc.data();
-            let imgHtml = q.imageUrl ? `<div style="margin-top:10px;"><img src="${q.imageUrl}" style="max-width:100%; max-height:220px; border-radius:6px;"></div>` : '';
-            const modalContent = document.getElementById('modalQuestionContent');
-            if (modalContent) {
-                modalContent.innerHTML = `
-                    <p><b>Exam Track:</b> ${q.examType} | <b>Subject:</b> ${q.subject} | <b>Year:</b> ${q.year}</p>
-                    <p style="background: var(--bg-gray); padding: 10px; border-radius: 6px; border: 1px solid var(--border-color); margin-top: 8px;"><b>Question:</b><br>${q.questionText}</p>
-                    ${imgHtml}
-                    <ul style="list-style-type: none; display: flex; flex-direction: column; gap: 4px; margin-top: 10px;">
-                        <li><b>A.</b> ${q.options.A}</li>
-                        <li><b>B.</b> ${q.options.B}</li>
-                        <li><b>C.</b> ${q.options.C}</li>
-                        <li><b>D.</b> ${q.options.D}</li>
-                    </ul>
-                    <p style="color: var(--naija-green); font-weight: bold; margin-top: 8px;">Correct Option: ${q.correctOption}</p>
-                    <p style="font-style: italic; color: var(--text-muted); margin-top: 4px;">Explanation: ${q.explanation}</p>
-                `;
-            }
-            document.getElementById('questionViewModal').classList.remove('hidden');
-        }
-    });
-}
-function closeQuestionModal() { document.getElementById('questionViewModal').classList.add('hidden'); }
-
-function togglePublishStatus(docId, currentStatus) {
-    db.collection('questions').doc(docId).update({ isPublished: !currentStatus }).then(() => {
-        fetchQuestionsForManagement(currentManagedTrack);
-    });
+function toggleFullscreenQuestionBank() {
+    const el = document.getElementById('qBankInspectorWrapper');
+    if (el) el.classList.toggle('fullscreen-mode');
 }
 
 function fetchQuestionsForManagement(examType) {
@@ -1464,7 +1546,10 @@ function fetchQuestionsForManagement(examType) {
     });
 
     const delInput = document.getElementById('deleteConfirmationInput');
-    if(delInput) delInput.value = '';
+    if(delInput) {
+        delInput.value = '';
+        delInput.placeholder = `Type 'DELETE ${examType}' to unlock`;
+    }
     const delHeader = document.getElementById('dangerZoneHeaderTitle');
     if(delHeader) delHeader.innerText = `Danger Zone: Delete Entire ${examType} Track`;
     const delBtn = document.getElementById('dangerDeleteBtn');
@@ -1480,34 +1565,66 @@ function fetchQuestionsForManagement(examType) {
     listEl.innerHTML = `<p class="muted-text">Loading ${examType} questions...</p>`;
 
     db.collection('questions').where('examType', '==', examType).get().then(snapshot => {
-        if (snapshot.empty) {
-            listEl.innerHTML = `<p class="muted-text">No questions stored for ${examType}.</p>`;
-            return;
-        }
-
-        let html = `<p style="font-size: 0.8rem; font-weight: bold; margin-bottom: 8px;">Total ${examType} Questions: ${snapshot.size}</p>`;
+        rawQuestionBankData = [];
         snapshot.forEach(doc => {
-            const q = doc.data();
-            const isPub = q.isPublished !== false;
-            html += `
-                <div style="background: var(--card-bg); padding: 10px; border-radius: 6px; margin-bottom: 8px; border: 1px solid var(--border-color); font-size: 0.8rem;">
-                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; flex-wrap: wrap; gap: 4px;">
-                        <div>
-                            <b>[${q.subject}]</b> Year: ${q.year} | Status: <span style="color: ${isPub ? 'var(--naija-green)' : '#d97706'}; font-weight: bold;">${isPub ? 'Published' : 'Unpublished'}</span>
-                        </div>
-                        <div style="display: flex; gap: 6px;">
-                            <button onclick="viewFullQuestion('${doc.id}')" title="View Full Question" style="background: #4b5563; color: white; border: none; padding: 4px 8px; border-radius: 4px; cursor: pointer;"><i class="fa-solid fa-eye"></i></button>
-                            <button onclick="togglePublishStatus('${doc.id}', ${isPub})" title="Publish/Unpublish" style="background: ${isPub ? '#d97706' : 'var(--naija-green)'}; color: white; border: none; padding: 4px 8px; border-radius: 4px; cursor: pointer;"><i class="fa-solid ${isPub ? 'fa-eye-slash' : 'fa-eye'}"></i></button>
-                            <button onclick="editQuestion('${doc.id}')" title="Edit" style="background: #2563eb; color: white; border: none; padding: 4px 8px; border-radius: 4px; cursor: pointer;"><i class="fa-solid fa-pen-to-square"></i></button>
-                            <button onclick="deleteSingleQuestion('${doc.id}')" title="Delete" style="background: #dc2626; color: white; border: none; padding: 4px 8px; border-radius: 4px; cursor: pointer;"><i class="fa-solid fa-trash"></i></button>
-                        </div>
-                    </div>
-                    <p style="color: var(--text-color);">${q.questionText}</p>
-                </div>
-            `;
+            rawQuestionBankData.push({ id: doc.id, ...doc.data() });
         });
-        listEl.innerHTML = html;
+
+        rawQuestionBankData.sort((a, b) => {
+            if (a.subject < b.subject) return -1;
+            if (a.subject > b.subject) return 1;
+            return (b.year || 0) - (a.year || 0);
+        });
+
+        renderQuestionBankList(rawQuestionBankData);
     });
+}
+
+function renderQuestionBankList(questions) {
+    const listEl = document.getElementById('questionBankList');
+    if (!listEl) return;
+
+    if (questions.length === 0) {
+        listEl.innerHTML = `<p class="muted-text">No matching questions stored.</p>`;
+        return;
+    }
+
+    let html = `<p style="font-size: 0.8rem; font-weight: bold; margin-bottom: 8px;">Total Listed Questions: ${questions.length}</p>`;
+    questions.forEach(q => {
+        const isPub = q.isPublished !== false;
+        html += `
+            <div style="background: var(--card-bg); padding: 10px; border-radius: 6px; margin-bottom: 8px; border: 1px solid var(--border-color); font-size: 0.8rem;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; flex-wrap: wrap; gap: 4px;">
+                    <div>
+                        <b>[${q.subject}]</b> Year: ${q.year || '2026'} | Status: <span style="color: ${isPub ? 'var(--naija-green)' : '#d97706'}; font-weight: bold;">${isPub ? 'Published' : 'Unpublished'}</span>
+                    </div>
+                    <div style="display: flex; gap: 6px;">
+                        <button onclick="viewFullQuestion('${q.id}')" style="background: #4b5563; color: white; border: none; padding: 4px 8px; border-radius: 4px; cursor: pointer;"><i class="fa-solid fa-eye"></i></button>
+                        <button onclick="togglePublishStatus('${q.id}', ${isPub})" style="background: ${isPub ? '#d97706' : 'var(--naija-green)'}; color: white; border: none; padding: 4px 8px; border-radius: 4px; cursor: pointer;"><i class="fa-solid ${isPub ? 'fa-eye-slash' : 'fa-eye'}"></i></button>
+                        <button onclick="editQuestion('${q.id}')" style="background: #2563eb; color: white; border: none; padding: 4px 8px; border-radius: 4px; cursor: pointer;"><i class="fa-solid fa-pen-to-square"></i></button>
+                        <button onclick="deleteSingleQuestion('${q.id}')" style="background: #dc2626; color: white; border: none; padding: 4px 8px; border-radius: 4px; cursor: pointer;"><i class="fa-solid fa-trash"></i></button>
+                    </div>
+                </div>
+                <p style="color: var(--text-color);">${q.questionText}</p>
+            </div>
+        `;
+    });
+    listEl.innerHTML = html;
+}
+
+function applyQuestionBankFilters() {
+    const searchText = (document.getElementById('searchQuestionBankInput').value || '').toLowerCase().trim();
+    const filterSub = document.getElementById('filterQbSubjectSelect').value;
+    const filterYear = (document.getElementById('filterQbYearInput').value || '').trim();
+
+    let filtered = rawQuestionBankData.filter(q => {
+        let matchText = !searchText || (q.questionText && q.questionText.toLowerCase().includes(searchText));
+        let matchSub = !filterSub || q.subject === filterSub;
+        let matchYear = !filterYear || String(q.year) === filterYear;
+        return matchText && matchSub && matchYear;
+    });
+
+    renderQuestionBankList(filtered);
 }
 
 function checkDeleteConfirmation(input) {
@@ -1545,12 +1662,11 @@ function clearSelectedExamTrack() {
     });
 }
 
-// CSV Template & Parsing with Image Support
 function downloadCSVTemplate(examType) {
     let csvContent = "question_id,examType,subject,year,question_text,image_url,option_a,option_b,option_c,option_d,correct_option,explanation\n";
     NIGERIAN_SUBJECTS.forEach((sub) => {
         const idCode = sub.substring(0, 3).toUpperCase();
-        csvContent += `${examType}_${idCode}_001,${examType},${sub},2026,"Sample ${examType} question for ${sub}.",https://example.com/image.png,Option A,Option B,Option C,Option D,A,"Explanation for ${sub}."\n`;
+        csvContent += `${examType}_${idCode}_001,${examType},${sub},2026,"Sample ${examType} question for ${sub}.",https://example.com/diagram.png,Option A,Option B,Option C,Option D,A,"Explanation for ${sub}."\n`;
     });
     let blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     let url = URL.createObjectURL(blob);
@@ -1564,19 +1680,12 @@ function downloadCSVTemplate(examType) {
 
 function parseCSVQuestions() {
     const fileInput = document.getElementById('csvFileInput');
-    if (!fileInput || fileInput.files.length === 0) {
-        alert("Please select a CSV file first.");
-        return;
-    }
-    const file = fileInput.files[0];
+    if (!fileInput || fileInput.files.length === 0) { alert("Please select a CSV file first."); return; }
     const reader = new FileReader();
     reader.onload = function(e) {
         const text = e.target.result;
         const lines = text.split('\n').filter(line => line.trim() !== '');
-        if (lines.length < 2) {
-            alert("CSV file is empty or missing headers.");
-            return;
-        }
+        if (lines.length < 2) return;
         const batch = db.batch();
         let count = 0;
         for (let i = 1; i < lines.length; i++) {
@@ -1605,38 +1714,59 @@ function parseCSVQuestions() {
             fileInput.value = '';
             fetchQuestionsForManagement(currentManagedTrack);
             updateDashboardCounters();
-        }).catch(err => alert("CSV Upload Error: " + err.message));
+        });
     };
-    reader.readAsText(file);
+    reader.readAsText(fileInput.files[0]);
 }
 
-// Video Hub Management (Fully Clickable & Functional)
+let tempVideoBase64 = "";
+function convertVideoFileToBase64(input) {
+    if (input.files && input.files[0]) {
+        let reader = new FileReader();
+        reader.onload = function(e) {
+            tempVideoBase64 = e.target.result;
+            document.getElementById('videoUrlInput').value = tempVideoBase64;
+        };
+        reader.readAsDataURL(input.files[0]);
+    }
+}
+
 function saveAdminVideo() {
     const title = document.getElementById('videoTitleInput').value.trim();
     const subject = document.getElementById('videoSubjectSelect').value;
+    const examType = document.getElementById('videoExamType').value;
+    const year = document.getElementById('videoYearInput').value.trim() || "2026";
     const url = document.getElementById('videoUrlInput').value.trim();
 
     if (!title || !subject || !url) {
-        alert("Please fill in all video details.");
+        alert("Please fill in video title, subject, and provide video URL/file.");
         return;
     }
 
     db.collection('videos').add({
         title: title,
         subject: subject,
+        examType: examType,
+        year: year,
         url: url,
         uploadedAt: new Date()
     }).then(() => {
         alert("Video lesson added successfully!");
         document.getElementById('videoTitleInput').value = '';
         document.getElementById('videoUrlInput').value = '';
+        document.getElementById('videoFileInput').value = '';
+        tempVideoBase64 = "";
         fetchAdminVideos();
-    }).catch(err => alert("Error saving video: " + err.message));
+    });
 }
 
 function fetchAdminVideos() {
     const container = document.getElementById('adminVideosListContainer');
     if (!container) return;
+    const filterExam = document.getElementById('filterVideoExam') ? document.getElementById('filterVideoExam').value : 'ALL';
+    const filterSub = document.getElementById('filterVideoSubject') ? document.getElementById('filterVideoSubject').value : '';
+    const filterYear = document.getElementById('filterVideoYear') ? document.getElementById('filterVideoYear').value.trim() : '';
+
     container.innerHTML = `<p class="muted-text">Loading videos...</p>`;
 
     db.collection('videos').get().then(snapshot => {
@@ -1648,14 +1778,18 @@ function fetchAdminVideos() {
         let html = '';
         snapshot.forEach(doc => {
             let v = doc.data();
+            if (filterExam !== 'ALL' && v.examType && v.examType !== filterExam) return;
+            if (filterSub !== '' && v.subject !== filterSub) return;
+            if (filterYear !== '' && String(v.year) !== filterYear) return;
+
             html += `
-                <div style="background: var(--card-bg); padding: 8px 12px; border-radius: 6px; margin-bottom: 6px; border: 1px solid var(--border-color); display: flex; justify-content: space-between; align-items: center; gap: 8px;">
-                    <span><b>${v.subject}:</b> ${v.title}</span>
+                <div style="background: var(--card-bg); padding: 8px 12px; border-radius: 6px; margin-bottom: 6px; border: 1px solid var(--border-color); display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 0.85rem;">
+                    <span><b>[${v.examType || 'ALL'} - ${v.subject}]</b> ${v.title} (${v.year || '2026'})</span>
                     <button onclick="deleteAdminVideo('${doc.id}')" class="logout-btn" style="padding: 2px 6px; font-size: 0.7rem;">Delete</button>
                 </div>
             `;
         });
-        container.innerHTML = html;
+        container.innerHTML = html || `<p class="muted-text">No videos found for this filter.</p>`;
     });
 }
 
@@ -1665,7 +1799,52 @@ function deleteAdminVideo(docId) {
     }
 }
 
-// Study Hub & Question Palette with Exam Filtering
+function downloadVideoCSVTemplate() {
+    let csvContent = "title,subject,examType,year,url\nOptics & Light Waves,Physics,JAMB,2026,https://youtube.com/watch?v=sample\n";
+    let blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    let url = URL.createObjectURL(blob);
+    let link = document.createElement("a");
+    link.setAttribute("href", url);
+    link.setAttribute("download", `elsa_videos_template.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+}
+
+function parseVideoCSV() {
+    const fileInput = document.getElementById('videoCsvFileInput');
+    if (!fileInput || fileInput.files.length === 0) { alert("Select CSV file first."); return; }
+    const reader = new FileReader();
+    reader.onload = function(e) {
+        const text = e.target.result;
+        const lines = text.split('\n').filter(l => l.trim() !== '');
+        if (lines.length < 2) return;
+        const batch = db.batch();
+        let count = 0;
+        for (let i = 1; i < lines.length; i++) {
+            const row = lines[i].split(',').map(c => c.trim());
+            if (row.length >= 5) {
+                let docRef = db.collection('videos').doc();
+                batch.set(docRef, {
+                    title: row[0],
+                    subject: row[1],
+                    examType: row[2] || 'ALL',
+                    year: row[3] || '2026',
+                    url: row[4],
+                    uploadedAt: new Date()
+                });
+                count++;
+            }
+        }
+        batch.commit().then(() => {
+            alert(`Uploaded ${count} videos successfully!`);
+            fileInput.value = '';
+            fetchAdminVideos();
+        });
+    };
+    reader.readAsText(fileInput.files[0]);
+}
+
 let studyQuestionsList = [];
 let studyCurrentIndex = 0;
 let studyUserAnswers = {};
@@ -1680,11 +1859,11 @@ function closeStudyModal() {
     if (modal) modal.classList.add('hidden');
 }
 
-function switchStudyViewMode(mode) {
-    const qBtn = document.getElementById('studyTabQuestionsBtn');
-    const vBtn = document.getElementById('studyTabVideosBtn');
-    const qCont = document.getElementById('studyQuestionsContainer');
-    const vCont = document.getElementById('studyVideosContainer');
+function switchStudyHubTab(mode) {
+    const qBtn = document.getElementById('btnStudyTypeQuestions');
+    const vBtn = document.getElementById('btnStudyTypeVideos');
+    const qCont = document.getElementById('studyQuestionsSection');
+    const vCont = document.getElementById('studyVideosSection');
 
     if (mode === 'questions') {
         if (qBtn) qBtn.classList.add('active');
@@ -1711,18 +1890,17 @@ function loadStudyVideos() {
             return;
         }
 
-        let html = '<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px;">';
+        let html = '';
         snapshot.forEach(doc => {
             let v = doc.data();
             html += `
-                <div class="content-box" style="margin-bottom: 0; background: var(--card-bg); border: 1px solid var(--border-color); padding: 14px; border-radius: 8px;">
-                    <h4 style="color: var(--naija-green); margin-bottom: 6px;">${v.subject}</h4>
+                <div class="content-box" style="background: var(--card-bg); border: 1px solid var(--border-color); padding: 14px; border-radius: 8px;">
+                    <h4 style="color: var(--naija-green); margin-bottom: 4px;">${v.subject} (${v.year || '2026'})</h4>
                     <p style="font-weight: bold; font-size: 0.9rem; margin-bottom: 10px;">${v.title}</p>
-                    <a href="${v.url}" target="_blank" class="primary-btn" style="display: inline-block; text-align: center; text-decoration: none; padding: 6px 12px; font-size: 0.8rem;"><i class="fa-solid fa-play"></i> Watch Video</a>
+                    <a href="${v.url}" target="_blank" class="primary-btn" style="display: inline-block; text-decoration: none; padding: 6px 12px; font-size: 0.8rem;"><i class="fa-solid fa-play"></i> Watch Video</a>
                 </div>
             `;
         });
-        html += '</div>';
         container.innerHTML = html;
     });
 }
@@ -1800,7 +1978,6 @@ function renderStudyHubInterface() {
         }
     });
 
-    // Render palette buttons
     let paletteHtml = '';
     studyQuestionsList.forEach((item, idx) => {
         let status = studyUserAnswers[idx] ? 'answered' : '';
@@ -1869,7 +2046,10 @@ function closeExplanationModal() {
     if (modal) modal.classList.add('hidden');
 }
 
-function handleLogout() { auth.signOut().then(() => showLoggedOutUI()); }
+function handleLogout() { 
+    if (inactivityLogoutTimer) clearTimeout(inactivityLogoutTimer);
+    auth.signOut().then(() => showLoggedOutUI()); 
+}
 
 function showLoggedOutUI() {
     document.getElementById('userStatusBadge').innerText = "Not Logged In";
@@ -1881,6 +2061,7 @@ function showLoggedOutUI() {
     switchAuthTab('login');
 }
 
+// Fixed Login Submit with Auto-Activation for Pre-Registered Users
 function handleLoginSubmit(e) {
     e.preventDefault();
     const email = document.getElementById('loginEmail').value.trim().toLowerCase();
@@ -1891,7 +2072,34 @@ function handleLoginSubmit(e) {
         return;
     }
 
-    auth.signInWithEmailAndPassword(email, pass).catch(err => alert("Login Error: " + err.message));
+    auth.signInWithEmailAndPassword(email, pass)
+        .catch((err) => {
+            if (err.code === 'auth/user-not-found' || err.code === 'auth/invalid-credential' || err.code === 'auth/wrong-password') {
+                db.collection('users').where('email', '==', email).get().then(snapshot => {
+                    if (!snapshot.empty) {
+                        let existingDoc = snapshot.docs[0];
+                        let existingData = existingDoc.data();
+                        auth.createUserWithEmailAndPassword(email, pass)
+                            .then(() => {
+                                return db.collection('users').doc(existingDoc.id).set({
+                                    ...existingData,
+                                    createdAt: existingData.createdAt || new Date()
+                                }, { merge: true });
+                            })
+                            .then(() => {
+                                alert("🎉 Account activated and logged in successfully!");
+                            })
+                            .catch(createErr => {
+                                alert("Login Error: " + createErr.message);
+                            });
+                    } else {
+                        alert("Login Error: " + err.message);
+                    }
+                });
+            } else {
+                alert("Login Error: " + err.message);
+            }
+        });
 }
 
 function handleSignupSubmit(e) {
@@ -1917,15 +2125,22 @@ function handleSignupSubmit(e) {
     db.collection('users').where('email', '==', email).get().then(snapshot => {
         if (snapshot.empty) {
             alert("❌ Signup Denied: Your Gmail address has not been pre-registered by an administrator.");
+            openContactAdminModal();
             return;
         }
 
         let existingDocId = snapshot.docs[0].id;
         let existingData = snapshot.docs[0].data();
 
+        if (existingData.username && existingData.username.toLowerCase() !== username.toLowerCase()) {
+            alert(`❌ Signup Denied: The full name "${username}" does not match the pre-registered name on file.`);
+            openContactAdminModal();
+            return;
+        }
+
         let processSignup = (passportBase64 = "") => {
             auth.createUserWithEmailAndPassword(email, password)
-                .then((cred) => {
+                .then(() => {
                     let userPayload = {
                         username: username,
                         email: email,
@@ -1971,8 +2186,4 @@ function downloadProfilePDF() {
         jsPDF:        { unit: 'mm', format: 'a4', orientation: 'portrait' }
     };
     html2pdf().from(element).set(opt).save();
-}
-
-function switchStudyHubTab(mode) {
-    switchStudyViewMode(mode);
 }
