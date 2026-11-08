@@ -2187,3 +2187,82 @@ function downloadProfilePDF() {
     };
     html2pdf().from(element).set(opt).save();
 }
+
+// Update user's active status every 60 seconds while logged in
+let presenceInterval = null;
+
+function initUserPresence(uid) {
+    if (!uid) return;
+    
+    const updatePresence = () => {
+        db.collection('users').doc(uid).set({
+            lastActive: firebase.firestore.FieldValue.serverTimestamp(),
+            isOnline: true
+        }, { merge: true }).catch(err => console.log("Presence update error:", err));
+    };
+
+    updatePresence();
+    if (presenceInterval) clearInterval(presenceInterval);
+    presenceInterval = setInterval(updatePresence, 60000); // Heartbeat every 1 min
+}
+
+// Inside your routeUserDashboard(uid) function, call:
+// initUserPresence(uid);
+
+// Update fetchAllUsersList to check if lastActive is within the last 3 minutes (active right now)
+function fetchAllUsersList(filterType) {
+    const container = document.getElementById('allUsersListContainer');
+    if (!container) return;
+    container.innerHTML = `<p style="color: var(--text-muted); font-size: 0.85rem;">Loading user directory...</p>`;
+
+    ['All', 'Active', 'Inactive'].forEach(f => {
+        const btn = document.getElementById(`userFilter${f}Btn`);
+        if (btn) btn.className = f.toLowerCase() === filterType ? "admin-tab-btn active" : "admin-tab-btn";
+    });
+
+    db.collection('users').orderBy('username', 'asc').get().then(snapshot => {
+        if (snapshot.empty) {
+            container.innerHTML = `<p style="color: var(--text-muted); font-size: 0.85rem;">No users registered.</p>`;
+            return;
+        }
+
+        let html = '';
+        let count = 0;
+        const now = new Date().getTime();
+
+        snapshot.forEach(doc => {
+            let u = doc.data();
+            
+            // Check if user was active in the last 3 minutes (180,000 ms)
+            let lastActiveTime = u.lastActive ? u.lastActive.toDate().getTime() : 0;
+            let isCurrentlyOnline = (now - lastActiveTime) < 3 * 60 * 1000;
+
+            if (filterType === 'active' && !isCurrentlyOnline) return;
+            if (filterType === 'inactive' && isCurrentlyOnline) return;
+
+            count++;
+            let passportPreview = u.passportUrl 
+                ? `<img src="${u.passportUrl}" style="width: 34px; height: 34px; border-radius: 50%; object-fit: cover; border: 1px solid var(--naija-green);">` 
+                : `<div style="width: 34px; height: 34px; background: var(--naija-green-light); color: var(--naija-green); border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 0.8rem;"><i class="fa-solid fa-user"></i></div>`;
+
+            html += `
+                <div style="background: var(--card-bg); padding: 10px 14px; border-radius: 6px; margin-bottom: 6px; border: 1px solid var(--border-color); display: flex; justify-content: space-between; align-items: center; font-size: 0.85rem; flex-wrap: wrap; gap: 8px;">
+                    <div style="display: flex; align-items: center; gap: 10px;">
+                        ${passportPreview}
+                        <div>
+                            <b>${u.username}</b> (${u.email})<br>
+                            <span style="font-size: 0.75rem; color: var(--text-muted);">Role: <b>${u.role.toUpperCase()}</b> | Class: <b>${u.assignedClass || 'None'}</b></span>
+                        </div>
+                    </div>
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                        <span class="status-pill ${isCurrentlyOnline ? 'online' : 'offline'}">
+                            ${isCurrentlyOnline ? 'Online Now' : 'Offline'}
+                        </span>
+                        <button onclick="openProfileModal('${doc.id}')" class="primary-btn" style="padding: 4px 8px; font-size: 0.75rem;"><i class="fa-solid fa-address-card"></i> Profile</button>
+                    </div>
+                </div>
+            `;
+        });
+        container.innerHTML = count > 0 ? html : `<p style="color: var(--text-muted); font-size: 0.85rem;">No users match this filter.</p>`;
+    });
+}

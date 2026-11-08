@@ -9,7 +9,6 @@
     --border-color: #d1d5db;
 }
 
-/* Dark Mode Theme Variables (Deep Slate & Emerald) */
 body.dark-mode {
     --bg-gray: #0f172a;
     --card-bg: #1e293b;
@@ -17,6 +16,53 @@ body.dark-mode {
     --text-muted: #94a3b8;
     --border-color: #334155;
     --naija-green-light: rgba(0, 135, 81, 0.2);
+}
+
+/* Real-Time Active Online Indicator Badges */
+.status-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.75rem;
+    padding: 3px 10px;
+    border-radius: 12px;
+    font-weight: bold;
+}
+
+.status-pill.online {
+    background-color: rgba(0, 135, 81, 0.15);
+    color: var(--naija-green);
+    border: 1px solid var(--naija-green);
+}
+
+.status-pill.online::before {
+    content: '';
+    width: 8px;
+    height: 8px;
+    background-color: var(--naija-green);
+    border-radius: 50%;
+    box-shadow: 0 0 6px var(--naija-green);
+    animation: pulse-glow 1.5s infinite;
+}
+
+.status-pill.offline {
+    background-color: rgba(220, 38, 38, 0.1);
+    color: #dc2626;
+    border: 1px solid #f87171;
+}
+
+.status-pill.offline::before {
+    content: '';
+    width: 8px;
+    height: 8px;
+    background-color: #dc2626;
+    border-radius: 50%;
+}
+
+@keyframes pulse-glow {
+    0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(0, 135, 81, 0.7); }
+    70% { transform: scale(1); box-shadow: 0 0 0 6px rgba(0, 135, 81, 0); }
+    100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(0, 135, 81, 0); }
 }
 
 * { 
