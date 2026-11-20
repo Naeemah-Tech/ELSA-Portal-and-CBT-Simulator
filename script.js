@@ -125,10 +125,10 @@ function togglePasswordVisibility(inputId, iconEl) {
     if (!input) return;
     if (input.type === 'password') {
         input.type = 'text';
-        iconEl.className = 'fa-solid fa-eye-slash toggle-password-icon';
+        iconEl.className = 'fa-solid fa-eye-slash password-toggle-icon';
     } else {
         input.type = 'password';
-        iconEl.className = 'fa-solid fa-eye toggle-password-icon';
+        iconEl.className = 'fa-solid fa-eye password-toggle-icon';
     }
 }
 
@@ -142,6 +142,7 @@ document.addEventListener("visibilitychange", function() {
 auth.onAuthStateChanged((user) => {
     if (user) {
         routeUserDashboard(user.uid);
+        initUserPresence(user.uid);
         resetInactivityTimer();
     } else {
         showLoggedOutUI();
@@ -224,33 +225,49 @@ function closeContactAdminModal() {
     document.getElementById('contactAdminModal').classList.add('hidden');
 }
 
+// Role-Based Portal Routing & UI Gating
 function routeUserDashboard(uid) {
     db.collection('users').doc(uid).get().then((doc) => {
         let username = "User";
         let role = "student";
+        let assignedClass = "None";
 
         if (doc.exists) {
             const data = doc.data();
             username = data.username || "User";
             role = data.role || "student";
+            assignedClass = data.assignedClass || "None";
         }
 
+        // Set Header Status
         document.getElementById('userStatusBadge').innerText = `${username} (${role.toUpperCase()})`;
         document.getElementById('logoutBtn').classList.remove('hidden');
         document.getElementById('hamburgerBtn').classList.remove('hidden');
         document.getElementById('welcomeUserName').innerText = username;
-
         document.getElementById('authSection').classList.add('hidden');
         document.getElementById('appSidebar').classList.remove('hidden');
 
+        // Portal-Specific View Control
         const roleMenu = document.getElementById('roleSpecificMenu');
-        if (roleMenu) {
-            roleMenu.style.display = (role === 'admin' || role === 'teacher') ? 'block' : 'none';
+        const adminNavLink = document.getElementById('navAdmin');
+        
+        if (role === 'admin') {
+            if (roleMenu) roleMenu.style.display = 'block';
+            if (adminNavLink) adminNavLink.style.display = 'block';
+            showView('viewHome'); // Admin lands on dashboard overview
+        } else if (role === 'teacher') {
+            if (roleMenu) roleMenu.style.display = 'block';
+            if (adminNavLink) adminNavLink.style.display = 'none'; // Hide heavy admin tools
+            showView('viewHome'); // Teachers get teacher portal view
+        } else {
+            // Student Portal
+            if (roleMenu) roleMenu.style.display = 'none';
+            if (adminNavLink) adminNavLink.style.display = 'none';
+            showView('viewHome'); // Students land on CBT & Study Hub portal
         }
 
         updateDashboardCounters();
-        fetchAllUsersList('ALL');
-        showView('viewHome');
+        fetchLeaderboard();
     });
 }
 
@@ -282,17 +299,99 @@ function updateDashboardCounters() {
 
 function showView(viewId) {
     document.querySelectorAll('.dashboard-view').forEach(v => v.classList.add('hidden'));
-    document.getElementById(viewId).classList.remove('hidden');
+    const targetView = document.getElementById(viewId);
+    if (targetView) targetView.classList.remove('hidden');
 
     document.querySelectorAll('.nav-link').forEach(btn => btn.classList.remove('active-simulator'));
-    if (viewId === 'viewHome') document.getElementById('navHome').classList.add('active-simulator');
-    if (viewId === 'viewHistory') document.getElementById('navHistory').classList.add('active-simulator');
-    if (viewId === 'viewAdmin') {
+    if (viewId === 'viewHome' && document.getElementById('navHome')) document.getElementById('navHome').classList.add('active-simulator');
+    if (viewId === 'viewHistory' && document.getElementById('navHistory')) document.getElementById('navHistory').classList.add('active-simulator');
+    if (viewId === 'viewAdmin' && document.getElementById('navAdmin')) {
         document.getElementById('navAdmin').classList.add('active-simulator');
         switchAdminTab('classes');
     }
 }
 
+// ==========================================
+// REAL-TIME ACTIVE PRESENCE & USER DIRECTORY
+// ==========================================
+let presenceInterval = null;
+
+function initUserPresence(uid) {
+    if (!uid) return;
+    const updatePresence = () => {
+        db.collection('users').doc(uid).set({
+            lastActive: firebase.firestore.FieldValue.serverTimestamp(),
+            isOnline: true
+        }, { merge: true }).catch(err => console.log("Presence heartbeat error:", err));
+    };
+
+    updatePresence();
+    if (presenceInterval) clearInterval(presenceInterval);
+    presenceInterval = setInterval(updatePresence, 60000); // Heartbeat every 60 seconds
+}
+
+function fetchAllUsersList(filterType) {
+    const container = document.getElementById('allUsersListContainer');
+    if (!container) return;
+    container.innerHTML = `<p style="color: var(--text-muted); font-size: 0.85rem;">Loading user directory...</p>`;
+
+    ['All', 'Active', 'Inactive'].forEach(f => {
+        const btn = document.getElementById(`userFilter${f}Btn`);
+        if (btn) btn.className = f.toLowerCase() === filterType ? "admin-tab-btn active" : "admin-tab-btn";
+    });
+
+    db.collection('users').get().then(snapshot => {
+        if (snapshot.empty) {
+            container.innerHTML = `<p style="color: var(--text-muted); font-size: 0.85rem;">No users registered.</p>`;
+            return;
+        }
+
+        let users = [];
+        snapshot.forEach(doc => users.push({ id: doc.id, ...doc.data() }));
+        users.sort((a, b) => (a.username || '').localeCompare(b.username || ''));
+
+        let html = '';
+        let count = 0;
+        const now = new Date().getTime();
+
+        users.forEach(u => {
+            let lastActiveTime = u.lastActive ? u.lastActive.toDate().getTime() : 0;
+            // Only users active in the last 3 minutes show the active status
+            let isCurrentlyOnline = (now - lastActiveTime) < 3 * 60 * 1000;
+
+            if (filterType === 'active' && !isCurrentlyOnline) return;
+            if (filterType === 'inactive' && isCurrentlyOnline) return;
+
+            count++;
+            let passportPreview = u.passportUrl 
+                ? `<img src="${u.passportUrl}" style="width: 34px; height: 34px; border-radius: 50%; object-fit: cover; border: 1px solid var(--naija-green);">` 
+                : `<div style="width: 34px; height: 34px; background: var(--naija-green-light); color: var(--naija-green); border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 0.8rem;"><i class="fa-solid fa-user"></i></div>`;
+
+            html += `
+                <div style="background: var(--card-bg); padding: 10px 14px; border-radius: 6px; margin-bottom: 6px; border: 1px solid var(--border-color); display: flex; justify-content: space-between; align-items: center; font-size: 0.85rem; flex-wrap: wrap; gap: 8px;">
+                    <div style="display: flex; align-items: center; gap: 10px;">
+                        ${passportPreview}
+                        <div>
+                            <b>${u.username}</b> (${u.email})<br>
+                            <span style="font-size: 0.75rem; color: var(--text-muted);">Role: <b>${(u.role || 'student').toUpperCase()}</b> | Class: <b>${u.assignedClass || 'None'}</b> | Phone: <b>${u.phone || 'N/A'}</b></span>
+                        </div>
+                    </div>
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                        <span class="status-pill ${isCurrentlyOnline ? 'online' : 'offline'}">
+                            ${isCurrentlyOnline ? 'Online Now' : 'Offline'}
+                        </span>
+                        <button onclick="openProfileModal('${u.id}')" class="primary-btn" style="padding: 4px 8px; font-size: 0.75rem;"><i class="fa-solid fa-address-card"></i> View Profile</button>
+                    </div>
+                </div>
+            `;
+        });
+        container.innerHTML = count > 0 ? html : `<p style="color: var(--text-muted); font-size: 0.85rem;">No users match this filter.</p>`;
+    });
+}
+
+// ==========================================
+// CBT SIMULATOR ENGINE
+// ==========================================
 function launchExamMode(examType) {
     currentSelectedExamType = examType;
     showView('viewCBT');
@@ -339,10 +438,16 @@ function fetchAvailableSubjectsForExam(examType) {
       .then(snapshot => {
           let subsSet = new Set();
           snapshot.forEach(doc => {
-              if (doc.data().subject) subsSet.add(doc.data().subject);
+              let data = doc.data();
+              if (data.subject && data.isPublished !== false) subsSet.add(data.subject);
           });
           availableExamSubjects = Array.from(subsSet).sort();
       });
+}
+
+function clearSubjectSelection() {
+    document.querySelectorAll('.subject-picker').forEach(sel => sel.value = '');
+    checkProceedExamButton();
 }
 
 function generateJAMBSubjects() {
@@ -399,7 +504,6 @@ function generateSubjectDropdowns() {
     }
 
     chosenDurationMinutes = count * 60;
-    
     const modeContainer = document.getElementById('cbtModesContainer');
     if (modeContainer) {
         modeContainer.innerHTML = `
@@ -417,42 +521,24 @@ function selectTestDuration(mins) {
     chosenDurationMinutes = mins;
     const pBtn = document.getElementById('btnPracticeMode');
     const fBtn = document.getElementById('btnFullTestMode');
-    if(pBtn && fBtn) {
-        if (mins === 40) {
-            pBtn.className = "mode-box active-mode";
-            fBtn.className = "mode-box";
-        } else {
-            fBtn.className = "mode-box active-mode";
-            pBtn.className = "mode-box";
-        }
+    if (pBtn && fBtn) {
+        pBtn.className = mins === 40 ? "mode-box active-mode" : "mode-box";
+        fBtn.className = mins === 120 ? "mode-box active-mode" : "mode-box";
     }
 }
 
 function checkProceedExamButton() {
     const pickers = document.querySelectorAll('.subject-picker');
     const proceedBtn = document.getElementById('proceedExamBtn');
-    let allSelected = true;
-
-    if (pickers.length === 0) {
-        allSelected = false;
-    } else {
-        pickers.forEach(p => {
-            if (!p.value || p.value === "") allSelected = false;
-        });
-    }
+    let allSelected = pickers.length > 0;
+    pickers.forEach(p => { if (!p.value) allSelected = false; });
 
     if (proceedBtn) {
-        if (allSelected) {
-            proceedBtn.disabled = false;
-            proceedBtn.classList.remove('muted-btn');
-            proceedBtn.style.opacity = '1';
-            proceedBtn.style.cursor = 'pointer';
-        } else {
-            proceedBtn.disabled = true;
-            proceedBtn.classList.add('muted-btn');
-            proceedBtn.style.opacity = '0.5';
-            proceedBtn.style.cursor = 'not-allowed';
-        }
+        proceedBtn.disabled = !allSelected;
+        proceedBtn.style.opacity = allSelected ? '1' : '0.5';
+        proceedBtn.style.cursor = allSelected ? 'pointer' : 'not-allowed';
+        if (allSelected) proceedBtn.classList.remove('muted-btn');
+        else proceedBtn.classList.add('muted-btn');
     }
 }
 
@@ -479,7 +565,7 @@ function launchStandaloneExam() {
         selectedSubjects.push({ subject: "Use of English", count: (chosenDurationMinutes === 40 ? 20 : 60), startIdx: 0 });
         let currentOffset = (chosenDurationMinutes === 40 ? 20 : 60);
         document.querySelectorAll('.subject-picker').forEach(sel => {
-            if(sel.value) {
+            if (sel.value) {
                 let cnt = (chosenDurationMinutes === 40 ? 10 : 40);
                 selectedSubjects.push({ subject: sel.value, count: cnt, startIdx: currentOffset });
                 currentOffset += cnt;
@@ -488,7 +574,7 @@ function launchStandaloneExam() {
     } else {
         let currentOffset = 0;
         document.querySelectorAll('.subject-picker').forEach(sel => {
-            if(sel.value) {
+            if (sel.value) {
                 selectedSubjects.push({ subject: sel.value, count: 50, startIdx: currentOffset });
                 currentOffset += 50;
             }
@@ -501,14 +587,17 @@ function launchStandaloneExam() {
       .get()
       .then((snapshot) => {
           if (snapshot.empty) {
-              alert(`No questions found in database for ${currentSelectedExamType}!`);
+              alert(`No published questions found in database for ${currentSelectedExamType}!`);
               closeStandaloneCbtWindow();
               return;
           }
 
           let allDbQuestions = [];
           snapshot.forEach((doc) => {
-              allDbQuestions.push({ id: doc.id, ...doc.data() });
+              let data = doc.data();
+              if (data.isPublished !== false) {
+                  allDbQuestions.push({ id: doc.id, ...data });
+              }
           });
 
           let assembledPaper = [];
@@ -517,12 +606,18 @@ function launchStandaloneExam() {
               subPool = shuffleArray(subPool);
               let sliced = subPool.slice(0, subObj.count);
               
-              while(sliced.length < subObj.count && subPool.length > 0) {
+              while (sliced.length < subObj.count && subPool.length > 0) {
                   let extra = subPool[Math.floor(Math.random() * subPool.length)];
                   sliced.push({ ...extra, id: extra.id + '_' + Math.random() });
               }
               assembledPaper = assembledPaper.concat(sliced);
           });
+
+          if (assembledPaper.length === 0) {
+              alert("No published questions available for the selected subjects.");
+              closeStandaloneCbtWindow();
+              return;
+          }
 
           currentExamQuestions = assembledPaper;
           renderSubjectTabs(selectedSubjects);
@@ -561,11 +656,7 @@ function displayCurrentQuestion() {
     if (metaText) metaText.innerText = `${q.examType || currentSelectedExamType} • Year: ${q.year || 2026} • Question #${currentQuestionIndex + 1}`;
 
     document.querySelectorAll('.cbt-subject-tab').forEach(tabBtn => {
-        if (tabBtn.innerText.trim() === q.subject) {
-            tabBtn.classList.add('active');
-        } else {
-            tabBtn.classList.remove('active');
-        }
+        tabBtn.classList.toggle('active', tabBtn.innerText.trim() === q.subject);
     });
 
     let imgHtml = q.imageUrl ? `<div style="margin-bottom:12px;"><img src="${q.imageUrl}" style="max-width:100%; max-height:220px; border-radius:6px; border:1px solid var(--border-color);"></div>` : '';
@@ -593,13 +684,8 @@ function displayCurrentQuestion() {
 
     const flagBtn = document.getElementById('flagQuestionBtn');
     if (flagBtn) {
-        if (flaggedQuestions[q.id]) {
-            flagBtn.classList.add('flagged');
-            flagBtn.innerHTML = `<i class="fa-solid fa-flag"></i> Flagged`;
-        } else {
-            flagBtn.classList.remove('flagged');
-            flagBtn.innerHTML = `<i class="fa-solid fa-flag"></i> Flag Question`;
-        }
+        flagBtn.className = flaggedQuestions[q.id] ? 'flag-btn flagged' : 'flag-btn';
+        flagBtn.innerHTML = flaggedQuestions[q.id] ? `<i class="fa-solid fa-flag"></i> Flagged` : `<i class="fa-solid fa-flag"></i> Flag Question`;
     }
 
     renderQuestionPalette();
@@ -704,10 +790,7 @@ function toggleCBTCalculator() {
 function calcClear() { const screen = document.getElementById('calcScreen'); if (screen) screen.value = '0'; }
 function calcAppend(val) {
     let screen = document.getElementById('calcScreen');
-    if (screen) {
-        if (screen.value === '0' && val !== '.') screen.value = val;
-        else screen.value += val;
-    }
+    if (screen) screen.value = (screen.value === '0' && val !== '.') ? val : screen.value + val;
 }
 function calcBack() {
     let screen = document.getElementById('calcScreen');
@@ -733,6 +816,9 @@ function getWaecNecoGrade(percentage) {
     return { grade: "F9", remark: "Fail", status: "Outright Fail" };
 }
 
+// ==========================================
+// DETAILED EXAM RESULTS & COLOR-CODED REVIEW
+// ==========================================
 function submitExamManually() {
     clearInterval(timerInterval);
     isExamActive = false;
@@ -742,8 +828,7 @@ function submitExamManually() {
     let totalQuestions = currentExamQuestions.length;
     let totalCorrect = 0;
     let subjectStats = {};
-    let reviewHTML = '';
-
+    let reviewLogArray = [];
     let timeUsedSecs = examStartTime ? Math.round((new Date() - examStartTime) / 1000) : 0;
     let timeUsedStr = `${Math.floor(timeUsedSecs / 60)} mins ${timeUsedSecs % 60} secs`;
 
@@ -759,38 +844,41 @@ function submitExamManually() {
             subjectStats[q.subject].correct += 1;
         }
 
-        reviewHTML += `
-            <div style="padding: 12px; border-bottom: 1px solid var(--border-color); font-size: 0.88rem; background: var(--card-bg); margin-bottom: 6px; border-radius: 6px;">
-                <p style="font-weight: bold; color: ${isCorrect ? 'var(--naija-green)' : '#dc2626'}; margin-bottom: 4px;">
-                    ${idx + 1}. [${q.subject}] ${q.questionText} (${isCorrect ? 'Correct ✓' : 'Incorrect ✗'})
-                </p>
-                <p style="margin-bottom: 4px;">Option Picked: <b style="color: ${isCorrect ? 'var(--naija-green)' : '#dc2626'};">${userChoice}</b> | Correct Option: <b style="color: var(--naija-green);">${q.correctOption}</b></p>
-                <div style="background: var(--bg-gray); padding: 8px 12px; border-radius: 6px; font-size: 0.8rem; margin-top: 6px;">
-                    <b style="color: var(--naija-green);"><i class="fa-solid fa-lightbulb"></i> Explanation:</b> ${q.explanation || 'No detailed explanation provided.'}
-                </div>
-            </div>
-        `;
+        reviewLogArray.push({
+            number: idx + 1,
+            subject: q.subject,
+            questionText: q.questionText,
+            imageUrl: q.imageUrl || "",
+            options: q.options || {},
+            userChoice: userChoice,
+            correctOption: q.correctOption,
+            isCorrect: isCorrect,
+            explanation: q.explanation || "No detailed explanation provided."
+        });
     });
 
     let percentage = Math.round((totalCorrect / (totalQuestions || 1)) * 100);
+    let finalScaledScore = currentSelectedExamType === 'JAMB' ? Math.round((totalCorrect / (totalQuestions || 1)) * 400) : percentage;
+
+    renderExamSlipUI(currentSelectedExamType, percentage, finalScaledScore, subjectStats, timeUsedStr, new Date().toLocaleString(), reviewLogArray);
+    saveExamResultToFirestore(currentSelectedExamType, percentage, totalCorrect, totalQuestions, finalScaledScore, subjectStats, timeUsedStr, reviewLogArray);
+}
+
+function renderExamSlipUI(examType, percentage, scaledScore, subjectStats, timeUsedStr, dateLabel, reviewLogArray) {
     document.getElementById('overallPercentageBadge').innerText = `${percentage}%`;
-    document.getElementById('resultsTimestamp').innerText = `Completed in ${timeUsedStr} on ${new Date().toLocaleString()}`;
+    document.getElementById('resultsTimestamp').innerText = `Completed in ${timeUsedStr} on ${dateLabel}`;
 
-    let finalScaledScore = 0;
     let gradeStatusText = "";
-
-    if (currentSelectedExamType === 'JAMB') {
-        finalScaledScore = Math.round((totalCorrect / (totalQuestions || 1)) * 400);
-        document.getElementById('resTotalScore').innerText = `${finalScaledScore} / 400`;
+    if (examType === 'JAMB') {
+        document.getElementById('resTotalScore').innerText = `${scaledScore} / 400`;
         document.getElementById('resScoreHeaderLabel').innerText = `JAMB SCORE (/400)`;
-        gradeStatusText = finalScaledScore >= 200 ? "PASSED (ADMISSIBLE)" : "NEEDS IMPROVEMENT";
+        gradeStatusText = scaledScore >= 200 ? "PASSED (ADMISSIBLE)" : "NEEDS IMPROVEMENT";
     } else {
         let overallGradeObj = getWaecNecoGrade(percentage);
         document.getElementById('resTotalScore').innerText = `${overallGradeObj.grade} (${percentage}%)`;
-        document.getElementById('resScoreHeaderLabel').innerText = `${currentSelectedExamType} SCORE / GRADE`;
+        document.getElementById('resScoreHeaderLabel').innerText = `${examType} SCORE / GRADE`;
         gradeStatusText = `${overallGradeObj.grade} - ${overallGradeObj.remark} (${overallGradeObj.status})`;
     }
-
     document.getElementById('resGradeStatus').innerText = gradeStatusText;
 
     let weakestSub = "None";
@@ -805,13 +893,7 @@ function submitExamManually() {
             lowestPercentage = subAcc;
             weakestSub = sub;
         }
-
-        let subExtraInfo = "";
-        if (currentSelectedExamType !== 'JAMB') {
-            let gObj = getWaecNecoGrade(subAcc);
-            subExtraInfo = ` | Grade: <b>${gObj.grade} (${gObj.remark})</b>`;
-        }
-
+        let subExtraInfo = examType !== 'JAMB' ? ` | Grade: <b>${getWaecNecoGrade(subAcc).grade}</b>` : "";
         breakdownHTML += `
             <div style="display: flex; justify-content: space-between; align-items: center; background: var(--bg-gray); padding: 8px 12px; border-radius: 6px; font-size: 0.85rem; margin-bottom: 4px;">
                 <span><b>${sub}</b> (${subCorrect}/${subTotal})${subExtraInfo}</span>
@@ -819,12 +901,70 @@ function submitExamManually() {
             </div>
         `;
     }
-
     document.getElementById('resWeakSubject').innerText = weakestSub === "None" ? "None" : `${weakestSub} (${lowestPercentage}%)`;
     document.getElementById('resSubjectBreakdownList').innerHTML = breakdownHTML;
-    document.getElementById('resDetailedReviewList').innerHTML = reviewHTML;
 
-    saveExamResultToFirestore(currentSelectedExamType, percentage, totalCorrect, totalQuestions, finalScaledScore, subjectStats, timeUsedStr);
+    // Detailed CBT Corrections Review with Color-Coding & Explanation Modal Button
+    let reviewHTML = '';
+    if (reviewLogArray && reviewLogArray.length > 0) {
+        reviewLogArray.forEach((item, index) => {
+            let optionsReviewHTML = '';
+            ['A', 'B', 'C', 'D'].forEach(optKey => {
+                if (item.options && item.options[optKey]) {
+                    let bg = 'var(--bg-gray)';
+                    let color = 'var(--text-color)';
+                    let border = '1px solid var(--border-color)';
+                    let statusTag = '';
+
+                    if (optKey === item.correctOption) {
+                        bg = 'rgba(0, 135, 81, 0.15)';
+                        color = '#008751';
+                        border = '1px solid #008751';
+                        statusTag = ' <b>(Correct Answer ✓)</b>';
+                    }
+                    if (optKey === item.userChoice && !item.isCorrect) {
+                        bg = 'rgba(220, 38, 38, 0.15)';
+                        color = '#dc2626';
+                        border = '1px solid #dc2626';
+                        statusTag = ' <b>(Your Pick - Wrong ✗)</b>';
+                    } else if (optKey === item.userChoice && item.isCorrect) {
+                        statusTag = ' <b>(Your Pick - Correct ✓)</b>';
+                    }
+
+                    optionsReviewHTML += `
+                        <div style="padding: 8px 12px; border-radius: 6px; margin-bottom: 6px; background: ${bg}; color: ${color}; border: ${border}; font-size: 0.85rem;">
+                            <b>${optKey}.</b> ${item.options[optKey]} ${statusTag}
+                        </div>
+                    `;
+                }
+            });
+
+            let imgBlock = item.imageUrl ? `<div style="margin: 8px 0;"><img src="${item.imageUrl}" style="max-width: 100%; max-height: 180px; border-radius: 6px;"></div>` : '';
+            let safeExplanation = (item.explanation || "No explanation available.").replace(/'/g, "\\'").replace(/"/g, '&quot;');
+
+            reviewHTML += `
+                <div style="padding: 14px; border-bottom: 1px solid var(--border-color); background: var(--card-bg); margin-bottom: 10px; border-radius: 8px; border-left: 4px solid ${item.isCorrect ? 'var(--naija-green)' : '#dc2626'};">
+                    <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; margin-bottom: 8px;">
+                        <p style="font-weight: bold; font-size: 0.9rem; color: var(--text-color);">
+                            ${item.number || index + 1}. [${item.subject}] ${item.questionText}
+                        </p>
+                        <span style="font-size: 0.75rem; font-weight: bold; padding: 2px 8px; border-radius: 4px; background: ${item.isCorrect ? 'var(--naija-green-light)' : '#fee2e2'}; color: ${item.isCorrect ? 'var(--naija-green-dark)' : '#dc2626'}; white-space: nowrap;">
+                            ${item.isCorrect ? 'Correct ✓' : 'Wrong ✗'}
+                        </span>
+                    </div>
+                    ${imgBlock}
+                    <div style="margin-bottom: 10px;">${optionsReviewHTML}</div>
+                    <button onclick="openExplanationModal('${item.correctOption}', '${safeExplanation}')" class="primary-btn" style="background: #2563eb; padding: 6px 12px; font-size: 0.8rem;">
+                        <i class="fa-solid fa-lightbulb"></i> View Explanation
+                    </button>
+                </div>
+            `;
+        });
+    } else {
+        reviewHTML = `<p style="color: var(--text-muted); font-size: 0.85rem;">Detailed question log was not archived for this legacy session.</p>`;
+    }
+
+    document.getElementById('resDetailedReviewList').innerHTML = reviewHTML;
 }
 
 function closeStandaloneResultsWindow() {
@@ -832,12 +972,14 @@ function closeStandaloneResultsWindow() {
     showView('viewHome');
 }
 
-function saveExamResultToFirestore(examType, percentage, score, total, scaledScore, subjectStats, timeUsedStr) {
+function saveExamResultToFirestore(examType, percentage, score, total, scaledScore, subjectStats, timeUsedStr, reviewLogArray) {
     if (!auth.currentUser) return;
     const uid = auth.currentUser.uid;
+    const userDisplayName = document.getElementById('welcomeUserName')?.innerText || auth.currentUser.email;
 
     db.collection('exam_results').add({
         userId: uid,
+        studentName: userDisplayName,
         examType: examType,
         percentage: percentage,
         score: score,
@@ -845,10 +987,14 @@ function saveExamResultToFirestore(examType, percentage, score, total, scaledSco
         scaledScore: scaledScore,
         subjectStats: subjectStats,
         timeUsed: timeUsedStr,
+        reviewLog: reviewLogArray,
         timestamp: new Date()
     });
 }
 
+// ==========================================
+// EXAM RECORDS & HISTORY (FIXED FIRESTORE QUERY)
+// ==========================================
 function showExamHistoryView() {
     showView('viewHistory');
     const container = document.getElementById('examHistoryListContainer');
@@ -858,16 +1004,19 @@ function showExamHistoryView() {
     if (!auth.currentUser) return;
     const currentUid = auth.currentUser.uid;
 
-    db.collection('exam_results').where('userId', '==', currentUid).orderBy('timestamp', 'desc').get().then(snapshot => {
+    // Query without orderBy to avoid composite index failures, then sort in JS
+    db.collection('exam_results').where('userId', '==', currentUid).get().then(snapshot => {
         if (snapshot.empty) {
-            container.innerHTML = `<p style="color: var(--text-muted);">No exam records logged yet.</p>`;
+            container.innerHTML = `<p style="color: var(--text-muted);">No exam records logged yet. Complete a simulator session to see your records here!</p>`;
             return;
         }
 
-        let html = `<div style="display: flex; flex-direction: column; gap: 8px;">`;
+        let records = [];
+        snapshot.forEach(doc => records.push({ id: doc.id, ...doc.data() }));
+        records.sort((a, b) => (b.timestamp?.toMillis() || 0) - (a.timestamp?.toMillis() || 0));
 
-        snapshot.forEach(doc => {
-            let res = doc.data();
+        let html = `<div style="display: flex; flex-direction: column; gap: 8px;">`;
+        records.forEach(res => {
             let dateStr = res.timestamp ? new Date(res.timestamp.toDate()).toLocaleString() : 'Recent';
             let formattedScore = res.examType === 'JAMB' ? `${res.scaledScore} / 400` : `${getWaecNecoGrade(res.percentage).grade} (${res.percentage}%)`;
 
@@ -877,12 +1026,14 @@ function showExamHistoryView() {
                         <b>${res.examType} Exam Session</b> • Score: <b style="color: var(--naija-green);">${formattedScore}</b><br>
                         <span style="font-size: 0.75rem; color: var(--text-muted);">Completed in ${res.timeUsed || 'N/A'} on ${dateStr}</span>
                     </div>
-                    <button onclick="inspectPastExamSlip('${doc.id}')" class="primary-btn" style="padding: 4px 10px; font-size: 0.8rem;"><i class="fa-solid fa-eye"></i> View Slip</button>
+                    <button onclick="inspectPastExamSlip('${res.id}')" class="primary-btn" style="padding: 6px 12px; font-size: 0.8rem;"><i class="fa-solid fa-eye"></i> View Slip & Corrections</button>
                 </div>
             `;
         });
         html += `</div>`;
         container.innerHTML = html;
+    }).catch(err => {
+        container.innerHTML = `<p style="color: #dc2626;">Error loading records: ${err.message}</p>`;
     });
 }
 
@@ -890,27 +1041,26 @@ function inspectPastExamSlip(resId) {
     db.collection('exam_results').doc(resId).get().then(doc => {
         if (doc.exists) {
             let res = doc.data();
-            document.getElementById('overallPercentageBadge').innerText = `${res.percentage}%`;
-            document.getElementById('resultsTimestamp').innerText = `Logged on ${res.timestamp ? new Date(res.timestamp.toDate()).toLocaleString() : 'Past Session'}`;
-            
-            if (res.examType === 'JAMB') {
-                document.getElementById('resTotalScore').innerText = `${res.scaledScore} / 400`;
-                document.getElementById('resScoreHeaderLabel').innerText = `JAMB SCORE (/400)`;
-                document.getElementById('resGradeStatus').innerText = res.scaledScore >= 200 ? "PASSED (ADMISSIBLE)" : "NEEDS IMPROVEMENT";
-            } else {
-                let gObj = getWaecNecoGrade(res.percentage);
-                document.getElementById('resTotalScore').innerText = `${gObj.grade} (${res.percentage}%)`;
-                document.getElementById('resScoreHeaderLabel').innerText = `${res.examType} SCORE / GRADE`;
-                document.getElementById('resGradeStatus').innerText = `${gObj.grade} - ${gObj.remark}`;
-            }
-            
+            let dateStr = res.timestamp ? new Date(res.timestamp.toDate()).toLocaleString() : 'Past Session';
+            renderExamSlipUI(
+                res.examType,
+                res.percentage,
+                res.scaledScore || res.percentage,
+                res.subjectStats || {},
+                res.timeUsed || 'N/A',
+                dateStr,
+                res.reviewLog || []
+            );
             document.getElementById('standaloneResultsWindow').classList.remove('hidden');
         }
     });
 }
 
+// ==========================================
+// ADMIN CONTROL PANEL TABS
+// ==========================================
 function switchAdminTab(tab) {
-    const panels = ['Classes', 'Teachers', 'Students', 'Questions', 'Videos', 'Results'];
+    const panels = ['Classes', 'Teachers', 'Students', 'Questions', 'Images', 'Videos', 'Results'];
     panels.forEach(p => {
         const panelEl = document.getElementById(`adminPanel${p}`);
         const btnEl = document.getElementById(`adminTabBtn${p}`);
@@ -929,61 +1079,9 @@ function switchAdminTab(tab) {
     if (tab === 'teachers') { populateClassDropdowns(); fetchTeachersList(); }
     if (tab === 'students') { populateClassDropdowns(); fetchStudentsList(); }
     if (tab === 'questions') fetchQuestionsForManagement('JAMB');
+    if (tab === 'images') fetchImageBank();
     if (tab === 'videos') fetchAdminVideos();
     if (tab === 'results') { populateClassDropdowns(); fetchAdminResultsLog(); }
-}
-
-function fetchAllUsersList(filterType) {
-    const container = document.getElementById('allUsersListContainer');
-    if (!container) return;
-    container.innerHTML = `<p style="color: var(--text-muted); font-size: 0.85rem;">Loading user directory...</p>`;
-
-    ['All', 'Active', 'Inactive'].forEach(f => {
-        const btn = document.getElementById(`userFilter${f}Btn`);
-        if (btn) btn.className = f.toLowerCase() === filterType ? "admin-tab-btn active" : "admin-tab-btn";
-    });
-
-    db.collection('users').orderBy('username', 'asc').get().then(snapshot => {
-        if (snapshot.empty) {
-            container.innerHTML = `<p style="color: var(--text-muted); font-size: 0.85rem;">No users registered.</p>`;
-            return;
-        }
-
-        let html = '';
-        let count = 0;
-
-        snapshot.forEach(doc => {
-            let u = doc.data();
-            let isActive = u.isRegisteredByAdmin || u.role === 'admin';
-            
-            if (filterType === 'active' && !isActive) return;
-            if (filterType === 'inactive' && isActive) return;
-
-            count++;
-            let passportPreview = u.passportUrl 
-                ? `<img src="${u.passportUrl}" style="width: 34px; height: 34px; border-radius: 50%; object-fit: cover; border: 1px solid var(--naija-green);">` 
-                : `<div style="width: 34px; height: 34px; background: var(--naija-green-light); color: var(--naija-green); border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 0.8rem;"><i class="fa-solid fa-user"></i></div>`;
-
-            html += `
-                <div style="background: var(--card-bg); padding: 10px 14px; border-radius: 6px; margin-bottom: 6px; border: 1px solid var(--border-color); display: flex; justify-content: space-between; align-items: center; font-size: 0.85rem; flex-wrap: wrap; gap: 8px;">
-                    <div style="display: flex; align-items: center; gap: 10px;">
-                        ${passportPreview}
-                        <div>
-                            <b>${u.username}</b> (${u.email})<br>
-                            <span style="font-size: 0.75rem; color: var(--text-muted);">Role: <b>${u.role.toUpperCase()}</b> | Class: <b>${u.assignedClass || 'None'}</b> | Phone: <b>${u.phone || 'N/A'}</b></span>
-                        </div>
-                    </div>
-                    <div style="display: flex; align-items: center; gap: 8px;">
-                        <span style="font-size: 0.75rem; padding: 2px 8px; border-radius: 4px; background: ${isActive ? 'var(--naija-green-light)' : '#fee2e2'}; color: ${isActive ? 'var(--naija-green-dark)' : '#dc2626'}; font-weight: bold;">
-                            ${isActive ? 'Active' : 'Inactive'}
-                        </span>
-                        <button onclick="openProfileModal('${doc.id}')" class="primary-btn" style="padding: 4px 8px; font-size: 0.75rem;"><i class="fa-solid fa-address-card"></i> View Profile</button>
-                    </div>
-                </div>
-            `;
-        });
-        container.innerHTML = count > 0 ? html : `<p style="color: var(--text-muted); font-size: 0.85rem;">No users match this filter.</p>`;
-    });
 }
 
 function fetchAdminResultsLog() {
@@ -991,25 +1089,28 @@ function fetchAdminResultsLog() {
     if (!container) return;
     container.innerHTML = `<p style="color: var(--text-muted); font-size: 0.85rem;">Loading student results log...</p>`;
 
-    db.collection('exam_results').orderBy('timestamp', 'desc').get().then(snapshot => {
+    db.collection('exam_results').get().then(snapshot => {
         if (snapshot.empty) {
             container.innerHTML = `<p style="color: var(--text-muted); font-size: 0.9rem;">No student scores recorded yet.</p>`;
             return;
         }
 
+        let results = [];
+        snapshot.forEach(doc => results.push({ id: doc.id, ...doc.data() }));
+        results.sort((a, b) => (b.timestamp?.toMillis() || 0) - (a.timestamp?.toMillis() || 0));
+
         let html = `<div style="display: flex; flex-direction: column; gap: 8px; max-height: 450px; overflow-y: auto;">`;
-        snapshot.forEach(doc => {
-            let res = doc.data();
+        results.forEach(res => {
             let dateStr = res.timestamp ? new Date(res.timestamp.toDate()).toLocaleString() : 'Recent';
             let formattedScore = res.examType === 'JAMB' ? `${res.scaledScore} / 400` : `${getWaecNecoGrade(res.percentage).grade} (${res.percentage}%)`;
 
             html += `
                 <div style="background: var(--card-bg); padding: 10px 14px; border-radius: 6px; border: 1px solid var(--border-color); display: flex; justify-content: space-between; align-items: center; font-size: 0.85rem; flex-wrap: wrap; gap: 8px;">
                     <div>
-                        <b>${res.examType} Exam Session Log</b><br>
+                        <b>${res.studentName || 'Student'} — ${res.examType} Exam Log</b><br>
                         <span style="font-size: 0.75rem; color: var(--text-muted);">Score: <b>${formattedScore}</b> | Time: ${res.timeUsed || 'N/A'} | Logged: ${dateStr}</span>
                     </div>
-                    <button onclick="inspectPastExamSlip('${doc.id}')" class="primary-btn" style="padding: 4px 8px; font-size: 0.75rem;"><i class="fa-solid fa-eye"></i> View Slip</button>
+                    <button onclick="inspectPastExamSlip('${res.id}')" class="primary-btn" style="padding: 4px 10px; font-size: 0.75rem;"><i class="fa-solid fa-eye"></i> View CBT Slip</button>
                 </div>
             `;
         });
@@ -1031,6 +1132,110 @@ function clearAllResultsLog() {
     }
 }
 
+// ==========================================
+// IMAGE BANK & COPIER (FOR CSV DIAGRAMS)
+// ==========================================
+let tempImageBankBase64 = "";
+
+function previewImageBankUpload(input) {
+    if (input.files && input.files[0]) {
+        let reader = new FileReader();
+        reader.onload = function(e) {
+            tempImageBankBase64 = e.target.result;
+        };
+        reader.readAsDataURL(input.files[0]);
+    }
+}
+
+function saveImageToBank() {
+    const titleInput = document.getElementById('imageBankTitle');
+    const title = titleInput ? titleInput.value.trim() || "Diagram Image" : "Diagram Image";
+    const fileInput = document.getElementById('imageBankFileInput');
+
+    if (!tempImageBankBase64) {
+        alert("Please select an image file to upload.");
+        return;
+    }
+
+    db.collection('image_bank').add({
+        title: title,
+        url: tempImageBankBase64,
+        createdAt: new Date()
+    }).then(() => {
+        alert("Image added to Image Bank successfully!");
+        if (titleInput) titleInput.value = '';
+        if (fileInput) fileInput.value = '';
+        tempImageBankBase64 = "";
+        fetchImageBank();
+    }).catch(err => alert("Upload error: " + err.message));
+}
+
+function fetchImageBank() {
+    const container = document.getElementById('imageBankListContainer');
+    if (!container) return;
+    container.innerHTML = `<p style="color: var(--text-muted); font-size: 0.85rem;">Loading image bank...</p>`;
+
+    db.collection('image_bank').get().then(snapshot => {
+        if (snapshot.empty) {
+            container.innerHTML = `<p style="color: var(--text-muted); font-size: 0.85rem;">No images uploaded to Image Bank yet.</p>`;
+            return;
+        }
+
+        let html = '';
+        snapshot.forEach(doc => {
+            let img = doc.data();
+            html += `
+                <div style="display: flex; justify-content: space-between; align-items: center; background: var(--card-bg); padding: 10px 12px; border-radius: 6px; margin-bottom: 8px; border: 1px solid var(--border-color); gap: 10px; flex-wrap: wrap;">
+                    <div style="display: flex; align-items: center; gap: 10px;">
+                        <input type="checkbox" class="image-bank-checkbox" value="${img.url}" style="width: 16px; height: 16px; cursor: pointer;">
+                        <img src="${img.url}" style="width: 48px; height: 48px; object-fit: cover; border-radius: 6px; border: 1px solid var(--border-color);">
+                        <div>
+                            <b>${img.title}</b><br>
+                            <small style="color: var(--text-muted); font-size: 0.72rem; word-break: break-all;">${img.url.substring(0, 50)}...</small>
+                        </div>
+                    </div>
+                    <div style="display: flex; gap: 6px;">
+                        <button onclick="copySingleImageLink('${doc.id}')" class="primary-btn" style="padding: 5px 10px; font-size: 0.75rem; background: #2563eb;"><i class="fa-solid fa-copy"></i> Copy Link</button>
+                        <button onclick="deleteBankImage('${doc.id}')" class="logout-btn" style="padding: 5px 10px; font-size: 0.75rem;"><i class="fa-solid fa-trash"></i></button>
+                    </div>
+                </div>
+            `;
+        });
+        container.innerHTML = html;
+    });
+}
+
+function copySingleImageLink(docId) {
+    db.collection('image_bank').doc(docId).get().then(doc => {
+        if (doc.exists) {
+            navigator.clipboard.writeText(doc.data().url).then(() => {
+                alert("✅ Image link copied to clipboard! Paste directly into your CSV file.");
+            });
+        }
+    });
+}
+
+function copyBulkImageLinks() {
+    const checkboxes = document.querySelectorAll('.image-bank-checkbox:checked');
+    if (checkboxes.length === 0) {
+        alert("Please tick at least one checkbox next to the images you want to bulk-copy.");
+        return;
+    }
+    let selectedLinks = Array.from(checkboxes).map(cb => cb.value);
+    navigator.clipboard.writeText(selectedLinks.join('\n')).then(() => {
+        alert(`✅ Bulk copied ${selectedLinks.length} selected image link(s) to clipboard!`);
+    });
+}
+
+function deleteBankImage(docId) {
+    if (confirm("Delete this image from the Image Bank?")) {
+        db.collection('image_bank').doc(docId).delete().then(() => fetchImageBank());
+    }
+}
+
+// ==========================================
+// CLASSES, TEACHERS & STUDENTS MANAGEMENT
+// ==========================================
 function createNewClass() {
     const classNameInput = document.getElementById('newClassNameInput');
     const className = classNameInput ? classNameInput.value.trim() : '';
@@ -1056,7 +1261,7 @@ function fetchClassesList() {
     if (!container) return;
     container.innerHTML = `<p style="color: var(--text-muted); font-size: 0.85rem;">Loading classes...</p>`;
 
-    db.collection('classes').orderBy('createdAt', 'desc').get().then(snapshot => {
+    db.collection('classes').get().then(snapshot => {
         const header = document.getElementById('classesCountHeader');
         if (header) header.innerText = `All Created Classes & Rosters (${snapshot.size})`;
 
@@ -1128,7 +1333,7 @@ function viewClassRoster(className) {
 }
 
 function populateClassDropdowns() {
-    db.collection('classes').orderBy('createdAt', 'desc').get().then(snapshot => {
+    db.collection('classes').get().then(snapshot => {
         let select = document.getElementById('studentClassDropdownSelect');
         let tSelect = document.getElementById('teacherClassDropdownSelect');
         let reselect = document.getElementById('reassignClassSelect');
@@ -1425,13 +1630,16 @@ function parseStudentCSV() {
     reader.readAsText(fileInput.files[0]);
 }
 
+// ==========================================
+// USER PROFILE MODALS (VIEW, EDIT, PDF EXPORT)
+// ==========================================
 function openProfileModal(userId) {
     activeProfileId = userId;
     db.collection('users').doc(userId).get().then(doc => {
         if (doc.exists) {
             let u = doc.data();
             activeProfileData = u;
-            document.getElementById('profileModalTitle').innerText = `${u.teacherTitle ? u.teacherTitle + ' ' : ''}${u.username} (${u.role.toUpperCase()})`;
+            document.getElementById('profileModalTitle').innerText = `${u.teacherTitle ? u.teacherTitle + ' ' : ''}${u.username} (${(u.role || 'student').toUpperCase()})`;
             document.getElementById('profileAvatarContainer').style.display = 'flex';
             
             const passportImg = document.getElementById('profilePassportImg');
@@ -1454,7 +1662,7 @@ function openProfileModal(userId) {
                 <p><b>Full Name:</b> <span>${u.username}</span></p>
                 <p><b>Gmail Address:</b> <span>${u.email}</span></p>
                 <p><b>Phone Number:</b> <span>${u.phone || 'N/A'}</span></p>
-                <p><b>Role:</b> <span>${u.role.toUpperCase()}</span></p>
+                <p><b>Role:</b> <span>${(u.role || 'student').toUpperCase()}</span></p>
                 <p><b>Assigned Class:</b> <span>${u.assignedClass || 'None'}</span></p>
                 <p><b>Gender:</b> <span>${u.gender || 'N/A'}</span></p>
                 ${trackRow}
@@ -1465,6 +1673,69 @@ function openProfileModal(userId) {
 }
 function closeProfileModal() { document.getElementById('profileModal').classList.add('hidden'); }
 
+function openEditProfileModal() {
+    if (!activeProfileData || !activeProfileId) return;
+    closeProfileModal();
+    populateClassDropdowns();
+    document.getElementById('editUserId').value = activeProfileId;
+    document.getElementById('editUserRole').value = activeProfileData.role || 'student';
+    document.getElementById('editProfileName').value = activeProfileData.username || '';
+    document.getElementById('editProfileEmail').value = activeProfileData.email || '';
+    document.getElementById('editProfileGender').value = activeProfileData.gender || 'Male';
+    document.getElementById('editProfileTrack').value = activeProfileData.examTrack || 'ALL';
+    document.getElementById('editTeacherTitle').value = activeProfileData.teacherTitle || 'Mr.';
+
+    document.getElementById('editTeacherTitleGroup').style.display = activeProfileData.role === 'teacher' ? 'flex' : 'none';
+    document.getElementById('editProfileTrackGroup').style.display = activeProfileData.role === 'student' ? 'flex' : 'none';
+
+    setTimeout(() => {
+        document.getElementById('editProfileClass').value = activeProfileData.assignedClass || 'None';
+    }, 300);
+
+    document.getElementById('editProfileModal').classList.remove('hidden');
+}
+
+function closeEditProfileModal() { document.getElementById('editProfileModal').classList.add('hidden'); }
+
+function saveProfileEdits() {
+    const uid = document.getElementById('editUserId').value;
+    const role = document.getElementById('editUserRole').value;
+    const name = document.getElementById('editProfileName').value.trim();
+    const email = document.getElementById('editProfileEmail').value.trim().toLowerCase();
+    const gender = document.getElementById('editProfileGender').value;
+    const assignedClass = document.getElementById('editProfileClass').value;
+
+    let updateData = { username: name, email: email, gender: gender, assignedClass: assignedClass };
+    if (role === 'teacher') updateData.teacherTitle = document.getElementById('editTeacherTitle').value;
+    if (role === 'student') updateData.examTrack = document.getElementById('editProfileTrack').value;
+
+    db.collection('users').doc(uid).update(updateData).then(() => {
+        alert("Profile updated successfully!");
+        closeEditProfileModal();
+        fetchAllUsersList('ALL');
+        fetchTeachersList();
+        fetchStudentsList();
+    });
+}
+
+function closeReassignModal() {
+    const modal = document.getElementById('reassignModal');
+    if (modal) modal.classList.add('hidden');
+}
+
+function saveUserReassignment() {
+    const uid = document.getElementById('reassignUserId').value;
+    const targetClass = document.getElementById('reassignClassSelect').value;
+    db.collection('users').doc(uid).update({ assignedClass: targetClass }).then(() => {
+        alert("Class assignment updated!");
+        closeReassignModal();
+        fetchAllUsersList('ALL');
+    });
+}
+
+// ==========================================
+// QUESTION BANK MANAGEMENT (PUBLISH, EDIT, UNPUBLISH, VIEW)
+// ==========================================
 let tempQuestionImageBase64 = "";
 function convertQuestionImageToBase64(input) {
     if (input.files && input.files[0]) {
@@ -1511,11 +1782,74 @@ function saveSingleQuestion() {
         isPublished: true,
         uploadedAt: new Date()
     }, { merge: true }).then(() => {
-        alert("Question saved successfully!");
+        alert(editId ? "Question updated successfully!" : "Question saved successfully!");
         resetQuestionForm();
         fetchQuestionsForManagement(currentManagedTrack);
         updateDashboardCounters();
     });
+}
+
+function editQuestion(docId) {
+    db.collection('questions').doc(docId).get().then(doc => {
+        if (doc.exists) {
+            let q = doc.data();
+            document.getElementById('editQuestionId').value = doc.id;
+            document.getElementById('singleExamType').value = q.examType || 'JAMB';
+            document.getElementById('singleSubject').value = q.subject || '';
+            document.getElementById('singleYear').value = q.year || '2026';
+            document.getElementById('singleQuestionText').value = q.questionText || '';
+            document.getElementById('singleImageUrl').value = q.imageUrl || '';
+            document.getElementById('singleOptA').value = q.options?.A || '';
+            document.getElementById('singleOptB').value = q.options?.B || '';
+            document.getElementById('singleOptC').value = q.options?.C || '';
+            document.getElementById('singleOptD').value = q.options?.D || '';
+            document.getElementById('singleCorrect').value = q.correctOption || 'A';
+            document.getElementById('singleExplanation').value = q.explanation || '';
+
+            document.getElementById('saveQuestionBtn').innerText = "Update Question";
+            document.getElementById('cancelEditBtn').classList.remove('hidden');
+            document.getElementById('adminPanelQuestions').scrollIntoView({ behavior: 'smooth' });
+        }
+    });
+}
+
+function togglePublishStatus(docId, currentStatus) {
+    db.collection('questions').doc(docId).update({
+        isPublished: !currentStatus
+    }).then(() => {
+        fetchQuestionsForManagement(currentManagedTrack);
+    }).catch(err => alert("Status update failed: " + err.message));
+}
+
+function viewFullQuestion(docId) {
+    db.collection('questions').doc(docId).get().then(doc => {
+        if (doc.exists) {
+            let q = doc.data();
+            let imgHtml = q.imageUrl ? `<img src="${q.imageUrl}" style="max-width:100%; max-height:200px; border-radius:6px; margin-top:8px;">` : '';
+            const modalBody = document.getElementById('modalQuestionContent');
+            if (modalBody) {
+                modalBody.innerHTML = `
+                    <p><b>Exam Track:</b> ${q.examType} | <b>Subject:</b> ${q.subject} | <b>Year:</b> ${q.year || '2026'}</p>
+                    <p style="font-weight:bold; margin-top:8px;">${q.questionText}</p>
+                    ${imgHtml}
+                    <div style="margin-top:8px; display:flex; flex-direction:column; gap:4px;">
+                        <span><b>A.</b> ${q.options?.A}</span>
+                        <span><b>B.</b> ${q.options?.B}</span>
+                        <span><b>C.</b> ${q.options?.C}</span>
+                        <span><b>D.</b> ${q.options?.D}</span>
+                    </div>
+                    <p style="color:var(--naija-green); font-weight:bold; margin-top:8px;">Correct Answer: ${q.correctOption}</p>
+                    <p style="background:var(--bg-gray); padding:8px; border-radius:6px;"><b>Explanation:</b> ${q.explanation || 'No explanation provided.'}</p>
+                `;
+                document.getElementById('questionViewModal').classList.remove('hidden');
+            }
+        }
+    });
+}
+
+function closeQuestionModal() {
+    const modal = document.getElementById('questionViewModal');
+    if (modal) modal.classList.add('hidden');
 }
 
 function resetQuestionForm() {
@@ -1529,7 +1863,7 @@ function resetQuestionForm() {
     document.getElementById('singleExplanation').value = '';
     document.getElementById('singleImageFileInput').value = '';
     tempQuestionImageBase64 = "";
-    document.getElementById('saveQuestionBtn').innerText = "Save Question to Firestore";
+    document.getElementById('saveQuestionBtn').innerText = "Save Question to Database";
     document.getElementById('cancelEditBtn').classList.add('hidden');
 }
 
@@ -1542,18 +1876,18 @@ function fetchQuestionsForManagement(examType) {
     currentManagedTrack = examType;
     ['JAMB', 'WAEC', 'NECO'].forEach(t => {
         const btn = document.getElementById(`btnManage${t}`);
-        if(btn) btn.className = t === examType ? "admin-tab-btn active" : "admin-tab-btn";
+        if (btn) btn.className = t === examType ? "admin-tab-btn active" : "admin-tab-btn";
     });
 
     const delInput = document.getElementById('deleteConfirmationInput');
-    if(delInput) {
+    if (delInput) {
         delInput.value = '';
         delInput.placeholder = `Type 'DELETE ${examType}' to unlock`;
     }
     const delHeader = document.getElementById('dangerZoneHeaderTitle');
-    if(delHeader) delHeader.innerText = `Danger Zone: Delete Entire ${examType} Track`;
+    if (delHeader) delHeader.innerText = `Danger Zone: Delete Entire ${examType} Track`;
     const delBtn = document.getElementById('dangerDeleteBtn');
-    if(delBtn) {
+    if (delBtn) {
         delBtn.disabled = true;
         delBtn.style.background = "#9ca3af";
         delBtn.style.cursor = "not-allowed";
@@ -1590,19 +1924,19 @@ function renderQuestionBankList(questions) {
     }
 
     let html = `<p style="font-size: 0.8rem; font-weight: bold; margin-bottom: 8px;">Total Listed Questions: ${questions.length}</p>`;
-    questions.forEach(q => {
+    questions.forEach((q, idx) => {
         const isPub = q.isPublished !== false;
         html += `
             <div style="background: var(--card-bg); padding: 10px; border-radius: 6px; margin-bottom: 8px; border: 1px solid var(--border-color); font-size: 0.8rem;">
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; flex-wrap: wrap; gap: 4px;">
                     <div>
-                        <b>[${q.subject}]</b> Year: ${q.year || '2026'} | Status: <span style="color: ${isPub ? 'var(--naija-green)' : '#d97706'}; font-weight: bold;">${isPub ? 'Published' : 'Unpublished'}</span>
+                        <b>#${idx + 1} [${q.subject}]</b> Year: ${q.year || '2026'} | Status: <span style="color: ${isPub ? 'var(--naija-green)' : '#d97706'}; font-weight: bold;">${isPub ? 'Published' : 'Unpublished'}</span>
                     </div>
                     <div style="display: flex; gap: 6px;">
-                        <button onclick="viewFullQuestion('${q.id}')" style="background: #4b5563; color: white; border: none; padding: 4px 8px; border-radius: 4px; cursor: pointer;"><i class="fa-solid fa-eye"></i></button>
-                        <button onclick="togglePublishStatus('${q.id}', ${isPub})" style="background: ${isPub ? '#d97706' : 'var(--naija-green)'}; color: white; border: none; padding: 4px 8px; border-radius: 4px; cursor: pointer;"><i class="fa-solid ${isPub ? 'fa-eye-slash' : 'fa-eye'}"></i></button>
-                        <button onclick="editQuestion('${q.id}')" style="background: #2563eb; color: white; border: none; padding: 4px 8px; border-radius: 4px; cursor: pointer;"><i class="fa-solid fa-pen-to-square"></i></button>
-                        <button onclick="deleteSingleQuestion('${q.id}')" style="background: #dc2626; color: white; border: none; padding: 4px 8px; border-radius: 4px; cursor: pointer;"><i class="fa-solid fa-trash"></i></button>
+                        <button onclick="viewFullQuestion('${q.id}')" style="background: #4b5563; color: white; border: none; padding: 4px 8px; border-radius: 4px; cursor: pointer;" title="View Full Question"><i class="fa-solid fa-eye"></i></button>
+                        <button onclick="togglePublishStatus('${q.id}', ${isPub})" style="background: ${isPub ? '#d97706' : 'var(--naija-green)'}; color: white; border: none; padding: 4px 8px; border-radius: 4px; cursor: pointer;" title="${isPub ? 'Unpublish' : 'Publish'}"><i class="fa-solid ${isPub ? 'fa-eye-slash' : 'fa-check'}"></i></button>
+                        <button onclick="editQuestion('${q.id}')" style="background: #2563eb; color: white; border: none; padding: 4px 8px; border-radius: 4px; cursor: pointer;" title="Edit Question"><i class="fa-solid fa-pen-to-square"></i></button>
+                        <button onclick="deleteSingleQuestion('${q.id}')" style="background: #dc2626; color: white; border: none; padding: 4px 8px; border-radius: 4px; cursor: pointer;" title="Delete"><i class="fa-solid fa-trash"></i></button>
                     </div>
                 </div>
                 <p style="color: var(--text-color);">${q.questionText}</p>
@@ -1613,9 +1947,9 @@ function renderQuestionBankList(questions) {
 }
 
 function applyQuestionBankFilters() {
-    const searchText = (document.getElementById('searchQuestionBankInput').value || '').toLowerCase().trim();
-    const filterSub = document.getElementById('filterQbSubjectSelect').value;
-    const filterYear = (document.getElementById('filterQbYearInput').value || '').trim();
+    const searchText = (document.getElementById('searchQuestionBankInput')?.value || '').toLowerCase().trim();
+    const filterSub = document.getElementById('filterQbSubjectSelect')?.value || '';
+    const filterYear = (document.getElementById('filterQbYearInput')?.value || '').trim();
 
     let filtered = rawQuestionBankData.filter(q => {
         let matchText = !searchText || (q.questionText && q.questionText.toLowerCase().includes(searchText));
@@ -1719,6 +2053,9 @@ function parseCSVQuestions() {
     reader.readAsText(fileInput.files[0]);
 }
 
+// ==========================================
+// VIDEO LESSONS (EMBEDDED WATCH, PUBLISH/UNPUBLISH, ASSIGN SUBJECT)
+// ==========================================
 let tempVideoBase64 = "";
 function convertVideoFileToBase64(input) {
     if (input.files && input.files[0]) {
@@ -1749,12 +2086,13 @@ function saveAdminVideo() {
         examType: examType,
         year: year,
         url: url,
+        isPublished: true,
         uploadedAt: new Date()
     }).then(() => {
         alert("Video lesson added successfully!");
         document.getElementById('videoTitleInput').value = '';
         document.getElementById('videoUrlInput').value = '';
-        document.getElementById('videoFileInput').value = '';
+        if (document.getElementById('videoFileInput')) document.getElementById('videoFileInput').value = '';
         tempVideoBase64 = "";
         fetchAdminVideos();
     });
@@ -1782,15 +2120,63 @@ function fetchAdminVideos() {
             if (filterSub !== '' && v.subject !== filterSub) return;
             if (filterYear !== '' && String(v.year) !== filterYear) return;
 
+            const isPub = v.isPublished !== false;
+            const embedUrl = convertYouTubeUrlToEmbed(v.url);
+
             html += `
-                <div style="background: var(--card-bg); padding: 8px 12px; border-radius: 6px; margin-bottom: 6px; border: 1px solid var(--border-color); display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 0.85rem;">
-                    <span><b>[${v.examType || 'ALL'} - ${v.subject}]</b> ${v.title} (${v.year || '2026'})</span>
-                    <button onclick="deleteAdminVideo('${doc.id}')" class="logout-btn" style="padding: 2px 6px; font-size: 0.7rem;">Delete</button>
+                <div style="background: var(--card-bg); padding: 10px 12px; border-radius: 6px; margin-bottom: 8px; border: 1px solid var(--border-color); display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 0.85rem; flex-wrap: wrap;">
+                    <div>
+                        <b>[${v.examType || 'ALL'} - ${v.subject}]</b> ${v.title} (${v.year || '2026'})<br>
+                        <span style="font-size: 0.75rem; color: ${isPub ? 'var(--naija-green)' : '#d97706'}; font-weight: bold;">Status: ${isPub ? 'Published' : 'Unpublished'}</span>
+                    </div>
+                    <div style="display: flex; gap: 6px; flex-wrap: wrap;">
+                        <button onclick="openVideoWatchModal('${embedUrl}', '${v.title.replace(/'/g, "\\'")}')" class="primary-btn" style="padding: 4px 8px; font-size: 0.75rem;"><i class="fa-solid fa-play"></i> Watch</button>
+                        <button onclick="toggleVideoPublishStatus('${doc.id}', ${isPub})" style="background: ${isPub ? '#d97706' : 'var(--naija-green)'}; color: white; border: none; padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 0.75rem;" title="${isPub ? 'Unpublish' : 'Publish'}"><i class="fa-solid ${isPub ? 'fa-eye-slash' : 'fa-check'}"></i></button>
+                        <button onclick="reassignVideoSubject('${doc.id}', '${v.subject}')" style="background: #2563eb; color: white; border: none; padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 0.75rem;" title="Assign Subject"><i class="fa-solid fa-book"></i></button>
+                        <button onclick="deleteAdminVideo('${doc.id}')" class="logout-btn" style="padding: 4px 8px; font-size: 0.75rem;"><i class="fa-solid fa-trash"></i></button>
+                    </div>
                 </div>
             `;
         });
         container.innerHTML = html || `<p class="muted-text">No videos found for this filter.</p>`;
     });
+}
+
+function toggleVideoPublishStatus(docId, currentStatus) {
+    db.collection('videos').doc(docId).update({ isPublished: !currentStatus }).then(() => fetchAdminVideos());
+}
+
+function reassignVideoSubject(docId, currentSub) {
+    let newSub = prompt(`Enter Subject Name to assign this video to (Current: ${currentSub}):`, currentSub);
+    if (newSub && newSub.trim() !== "") {
+        db.collection('videos').doc(docId).update({ subject: newSub.trim() }).then(() => {
+            alert(`Video assigned to ${newSub.trim()}!`);
+            fetchAdminVideos();
+        });
+    }
+}
+
+function convertYouTubeUrlToEmbed(url) {
+    if (!url) return '';
+    if (url.includes('embed') || url.startsWith('data:video')) return url;
+    let videoId = '';
+    if (url.includes('youtu.be/')) {
+        videoId = url.split('youtu.be/')[1]?.split('?')[0];
+    } else if (url.includes('watch?v=')) {
+        videoId = url.split('watch?v=')[1]?.split('&')[0];
+    }
+    return videoId ? `https://www.youtube.com/embed/${videoId}` : url;
+}
+
+function openVideoWatchModal(embedUrl, title) {
+    document.getElementById('videoModalTitle').innerText = title;
+    document.getElementById('videoModalFrame').src = embedUrl;
+    document.getElementById('videoWatchModal').classList.remove('hidden');
+}
+
+function closeVideoWatchModal() {
+    document.getElementById('videoModalFrame').src = '';
+    document.getElementById('videoWatchModal').classList.add('hidden');
 }
 
 function deleteAdminVideo(docId) {
@@ -1831,6 +2217,7 @@ function parseVideoCSV() {
                     examType: row[2] || 'ALL',
                     year: row[3] || '2026',
                     url: row[4],
+                    isPublished: true,
                     uploadedAt: new Date()
                 });
                 count++;
@@ -1845,6 +2232,9 @@ function parseVideoCSV() {
     reader.readAsText(fileInput.files[0]);
 }
 
+// ==========================================
+// STUDY HUB (SEQUENTIAL QUESTION NUMBERS + VIDEO MODAL)
+// ==========================================
 let studyQuestionsList = [];
 let studyCurrentIndex = 0;
 let studyUserAnswers = {};
@@ -1893,15 +2283,17 @@ function loadStudyVideos() {
         let html = '';
         snapshot.forEach(doc => {
             let v = doc.data();
+            if (v.isPublished === false) return;
+            let embedUrl = convertYouTubeUrlToEmbed(v.url);
             html += `
                 <div class="content-box" style="background: var(--card-bg); border: 1px solid var(--border-color); padding: 14px; border-radius: 8px;">
                     <h4 style="color: var(--naija-green); margin-bottom: 4px;">${v.subject} (${v.year || '2026'})</h4>
                     <p style="font-weight: bold; font-size: 0.9rem; margin-bottom: 10px;">${v.title}</p>
-                    <a href="${v.url}" target="_blank" class="primary-btn" style="display: inline-block; text-decoration: none; padding: 6px 12px; font-size: 0.8rem;"><i class="fa-solid fa-play"></i> Watch Video</a>
+                    <button onclick="openVideoWatchModal('${embedUrl}', '${v.title.replace(/'/g, "\\'")}')" class="primary-btn" style="padding: 6px 12px; font-size: 0.8rem;"><i class="fa-solid fa-play"></i> Watch Video</button>
                 </div>
             `;
         });
-        container.innerHTML = html;
+        container.innerHTML = html || `<p class="muted-text">No published video tutorials available.</p>`;
     });
 }
 
@@ -1920,7 +2312,9 @@ function fetchStudyQuestionCount() {
     if (examType !== 'ALL') query = query.where('examType', '==', examType);
 
     query.get().then(snapshot => {
-        countDisplay.innerText = `📚 Available Questions in Database: ${snapshot.size}`;
+        let publishedCount = 0;
+        snapshot.forEach(doc => { if (doc.data().isPublished !== false) publishedCount++; });
+        countDisplay.innerText = `📚 Available Questions in Database: ${publishedCount}`;
     });
 }
 
@@ -1952,7 +2346,12 @@ function startStudySession() {
         }
 
         studyQuestionsList = [];
-        snapshot.forEach(doc => { studyQuestionsList.push({ id: doc.id, ...doc.data() }); });
+        snapshot.forEach(doc => {
+            let data = doc.data();
+            if (data.isPublished !== false) {
+                studyQuestionsList.push({ id: doc.id, ...data });
+            }
+        });
         studyCurrentIndex = 0;
         studyUserAnswers = {};
         renderStudyHubInterface();
@@ -1964,6 +2363,7 @@ function renderStudyHubInterface() {
     if (!container || studyQuestionsList.length === 0) return;
 
     const q = studyQuestionsList[studyCurrentIndex];
+    const questionNumber = studyCurrentIndex + 1;
     let imgHtml = q.imageUrl ? `<div style="margin-bottom:10px;"><img src="${q.imageUrl}" style="max-width:100%; max-height:220px; border-radius:6px;"></div>` : '';
     
     let optionsHtml = '';
@@ -1985,19 +2385,21 @@ function renderStudyHubInterface() {
         paletteHtml += `<button onclick="jumpStudyQuestion(${idx})" class="palette-num-btn ${status}" style="width: 32px; height: 32px; font-size: 0.8rem; border-radius: 4px; border: 1px solid var(--border-color); background: var(--card-bg); color: var(--text-color); cursor: pointer;">${idx + 1}</button>`;
     });
 
+    let safeExplanation = (q.explanation || "No explanation provided.").replace(/'/g, "\\'").replace(/"/g, '&quot;');
+
     container.innerHTML = `
         <div style="display: grid; grid-template-columns: 1fr 260px; gap: 16px; align-items: start;">
             <div class="content-box" style="background: var(--card-bg); border: 1px solid var(--border-color); padding: 20px; border-radius: 8px;">
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
                     <span class="brand-badge" style="font-size: 0.75rem; background: var(--naija-green-light); color: var(--naija-green-dark);">${q.examType || 'GENERAL'} • ${q.subject}</span>
-                    <span style="font-size: 0.75rem; color: var(--text-muted);">Year: ${q.year || '2026'} | Q ${studyCurrentIndex + 1} of ${studyQuestionsList.length}</span>
+                    <span style="font-size: 0.75rem; color: var(--text-muted);">Year: ${q.year || '2026'} | Question ${questionNumber} of ${studyQuestionsList.length}</span>
                 </div>
-                <p style="font-weight: bold; margin-bottom: 12px;">${q.questionText}</p>
+                <p style="font-weight: bold; margin-bottom: 12px;">${questionNumber}. ${q.questionText}</p>
                 ${imgHtml}
                 <div style="margin-bottom: 14px;">${optionsHtml}</div>
                 <div style="display: flex; gap: 10px;">
                     <button onclick="navigateStudy(-1)" class="primary-btn" style="background: #4b5563; font-size: 0.8rem; padding: 6px 12px;"><i class="fa-solid fa-arrow-left"></i> Previous</button>
-                    <button onclick="openExplanationModal('${q.correctOption}', '${q.explanation.replace(/'/g, "\\'")}')" class="primary-btn" style="background: #2563eb; font-size: 0.8rem; padding: 6px 12px;"><i class="fa-solid fa-lightbulb"></i> Solution</button>
+                    <button onclick="openExplanationModal('${q.correctOption}', '${safeExplanation}')" class="primary-btn" style="background: #2563eb; font-size: 0.8rem; padding: 6px 12px;"><i class="fa-solid fa-lightbulb"></i> Solution</button>
                     <button onclick="navigateStudy(1)" class="primary-btn" style="font-size: 0.8rem; padding: 6px 12px;">Next <i class="fa-solid fa-arrow-right"></i></button>
                 </div>
             </div>
@@ -2046,8 +2448,15 @@ function closeExplanationModal() {
     if (modal) modal.classList.add('hidden');
 }
 
+// ==========================================
+// AUTHENTICATION & LOGOUT
+// ==========================================
 function handleLogout() { 
     if (inactivityLogoutTimer) clearTimeout(inactivityLogoutTimer);
+    if (presenceInterval) clearInterval(presenceInterval);
+    if (auth.currentUser) {
+        db.collection('users').doc(auth.currentUser.uid).update({ isOnline: false, lastActive: new Date(0) }).catch(() => {});
+    }
     auth.signOut().then(() => showLoggedOutUI()); 
 }
 
@@ -2061,7 +2470,6 @@ function showLoggedOutUI() {
     switchAuthTab('login');
 }
 
-// Fixed Login Submit with Auto-Activation for Pre-Registered Users
 function handleLoginSubmit(e) {
     e.preventDefault();
     const email = document.getElementById('loginEmail').value.trim().toLowerCase();
@@ -2080,8 +2488,8 @@ function handleLoginSubmit(e) {
                         let existingDoc = snapshot.docs[0];
                         let existingData = existingDoc.data();
                         auth.createUserWithEmailAndPassword(email, pass)
-                            .then(() => {
-                                return db.collection('users').doc(existingDoc.id).set({
+                            .then((cred) => {
+                                return db.collection('users').doc(cred.user.uid).set({
                                     ...existingData,
                                     createdAt: existingData.createdAt || new Date()
                                 }, { merge: true });
@@ -2105,72 +2513,53 @@ function handleLoginSubmit(e) {
 function handleSignupSubmit(e) {
     e.preventDefault();
     const email = document.getElementById('signupEmail').value.trim().toLowerCase();
-    const password = document.getElementById('signupPassword').value;
+    const pass = document.getElementById('signupPassword').value;
     const username = document.getElementById('signupUsername').value.trim();
     const role = document.getElementById('signupRole').value;
     const gender = document.getElementById('signupGender').value;
-    const teacherTitle = document.getElementById('signupTeacherTitle').value;
+    const teacherTitle = document.getElementById('signupTeacherTitle')?.value || '';
     const passportInput = document.getElementById('signupPassportInput');
 
-    if (!email.endsWith('@gmail.com')) {
-        alert("⚠️ Please enter a valid @gmail.com address.");
-        return;
+    if (role === 'admin' && !PERMITTED_ADMINS.includes(email)) { 
+        alert("Access Denied: Unauthorized admin email."); 
+        return; 
     }
 
-    if (role === 'admin' && !PERMITTED_ADMINS.includes(email)) {
-        alert("Access Denied: Email not authorized for Admin account creation.");
-        return;
-    }
-
-    db.collection('users').where('email', '==', email).get().then(snapshot => {
-        if (snapshot.empty) {
-            alert("❌ Signup Denied: Your Gmail address has not been pre-registered by an administrator.");
+    // Check if email was pre-registered by admin in Firestore
+    db.collection('users').where('email', '==', email).get().then(snap => {
+        if (snap.empty && !PERMITTED_ADMINS.includes(email)) {
+            alert("❌ Signup Denied: Your Gmail address must be pre-registered by an administrator first.");
             openContactAdminModal();
             return;
         }
 
-        let existingDocId = snapshot.docs[0].id;
-        let existingData = snapshot.docs[0].data();
-
-        if (existingData.username && existingData.username.toLowerCase() !== username.toLowerCase()) {
-            alert(`❌ Signup Denied: The full name "${username}" does not match the pre-registered name on file.`);
-            openContactAdminModal();
-            return;
-        }
-
-        let processSignup = (passportBase64 = "") => {
-            auth.createUserWithEmailAndPassword(email, password)
-                .then(() => {
-                    let userPayload = {
-                        username: username,
-                        email: email,
-                        role: role,
-                        assignedClass: existingData.assignedClass || 'Unassigned',
-                        gender: gender,
-                        passportUrl: passportBase64 || existingData.passportUrl || "",
-                        createdAt: existingData.createdAt || new Date()
-                    };
-                    if (role === 'teacher') {
-                        userPayload.teacherTitle = teacherTitle || existingData.teacherTitle || 'Mr.';
-                    } else if (role === 'student') {
-                        userPayload.examTrack = existingData.examTrack || 'ALL';
-                    }
-                    return db.collection('users').doc(existingDocId).set(userPayload, { merge: true });
-                })
-                .then(() => {
-                    alert("🎉 Account created successfully! Welcome to ELSA CBT.");
-                })
-                .catch((err) => alert("Signup Failed: " + err.message));
+        const existingData = !snap.empty ? snap.docs[0].data() : {};
+        
+        const finishSignup = (passportUrl = "") => {
+            auth.createUserWithEmailAndPassword(email, pass).then(cred => {
+                // If they were pre-registered, keep their assigned class, else default to 'Unassigned'
+                return db.collection('users').doc(cred.user.uid).set({
+                    username: username || existingData.username,
+                    email,
+                    role,
+                    gender,
+                    teacherTitle: role === 'teacher' ? teacherTitle : '',
+                    assignedClass: existingData.assignedClass || 'Unassigned',
+                    examTrack: existingData.examTrack || 'ALL',
+                    passportUrl: passportUrl || existingData.passportUrl || "",
+                    createdAt: existingData.createdAt || new Date()
+                }, { merge: true });
+            }).then(() => {
+                alert("🎉 Account registered and linked successfully!");
+            }).catch(err => alert("Signup error: " + err.message));
         };
 
         if (passportInput && passportInput.files.length > 0) {
             let reader = new FileReader();
-            reader.onload = function(uploadEvent) {
-                processSignup(uploadEvent.target.result);
-            };
+            reader.onload = ev => finishSignup(ev.target.result);
             reader.readAsDataURL(passportInput.files[0]);
         } else {
-            processSignup();
+            finishSignup();
         }
     });
 }
@@ -2188,81 +2577,25 @@ function downloadProfilePDF() {
     html2pdf().from(element).set(opt).save();
 }
 
-// Update user's active status every 60 seconds while logged in
-let presenceInterval = null;
-
-function initUserPresence(uid) {
-    if (!uid) return;
-    
-    const updatePresence = () => {
-        db.collection('users').doc(uid).set({
-            lastActive: firebase.firestore.FieldValue.serverTimestamp(),
-            isOnline: true
-        }, { merge: true }).catch(err => console.log("Presence update error:", err));
-    };
-
-    updatePresence();
-    if (presenceInterval) clearInterval(presenceInterval);
-    presenceInterval = setInterval(updatePresence, 60000); // Heartbeat every 1 min
+// Select-Type Subject Assignment Functions (Replaces alert/prompt typing)
+function openAssignVideoSubjectModal(docId, currentSubject) {
+    document.getElementById('assignVideoDocId').value = docId;
+    const dropdown = document.getElementById('assignVideoSubjectDropdown');
+    if (dropdown) dropdown.value = currentSubject || "";
+    document.getElementById('assignVideoSubjectModal').classList.remove('hidden');
 }
 
-// Inside your routeUserDashboard(uid) function, call:
-// initUserPresence(uid);
+function closeAssignVideoSubjectModal() {
+    document.getElementById('assignVideoSubjectModal').classList.add('hidden');
+}
 
-// Update fetchAllUsersList to check if lastActive is within the last 3 minutes (active right now)
-function fetchAllUsersList(filterType) {
-    const container = document.getElementById('allUsersListContainer');
-    if (!container) return;
-    container.innerHTML = `<p style="color: var(--text-muted); font-size: 0.85rem;">Loading user directory...</p>`;
-
-    ['All', 'Active', 'Inactive'].forEach(f => {
-        const btn = document.getElementById(`userFilter${f}Btn`);
-        if (btn) btn.className = f.toLowerCase() === filterType ? "admin-tab-btn active" : "admin-tab-btn";
-    });
-
-    db.collection('users').orderBy('username', 'asc').get().then(snapshot => {
-        if (snapshot.empty) {
-            container.innerHTML = `<p style="color: var(--text-muted); font-size: 0.85rem;">No users registered.</p>`;
-            return;
-        }
-
-        let html = '';
-        let count = 0;
-        const now = new Date().getTime();
-
-        snapshot.forEach(doc => {
-            let u = doc.data();
-            
-            // Check if user was active in the last 3 minutes (180,000 ms)
-            let lastActiveTime = u.lastActive ? u.lastActive.toDate().getTime() : 0;
-            let isCurrentlyOnline = (now - lastActiveTime) < 3 * 60 * 1000;
-
-            if (filterType === 'active' && !isCurrentlyOnline) return;
-            if (filterType === 'inactive' && isCurrentlyOnline) return;
-
-            count++;
-            let passportPreview = u.passportUrl 
-                ? `<img src="${u.passportUrl}" style="width: 34px; height: 34px; border-radius: 50%; object-fit: cover; border: 1px solid var(--naija-green);">` 
-                : `<div style="width: 34px; height: 34px; background: var(--naija-green-light); color: var(--naija-green); border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 0.8rem;"><i class="fa-solid fa-user"></i></div>`;
-
-            html += `
-                <div style="background: var(--card-bg); padding: 10px 14px; border-radius: 6px; margin-bottom: 6px; border: 1px solid var(--border-color); display: flex; justify-content: space-between; align-items: center; font-size: 0.85rem; flex-wrap: wrap; gap: 8px;">
-                    <div style="display: flex; align-items: center; gap: 10px;">
-                        ${passportPreview}
-                        <div>
-                            <b>${u.username}</b> (${u.email})<br>
-                            <span style="font-size: 0.75rem; color: var(--text-muted);">Role: <b>${u.role.toUpperCase()}</b> | Class: <b>${u.assignedClass || 'None'}</b></span>
-                        </div>
-                    </div>
-                    <div style="display: flex; align-items: center; gap: 8px;">
-                        <span class="status-pill ${isCurrentlyOnline ? 'online' : 'offline'}">
-                            ${isCurrentlyOnline ? 'Online Now' : 'Offline'}
-                        </span>
-                        <button onclick="openProfileModal('${doc.id}')" class="primary-btn" style="padding: 4px 8px; font-size: 0.75rem;"><i class="fa-solid fa-address-card"></i> Profile</button>
-                    </div>
-                </div>
-            `;
-        });
-        container.innerHTML = count > 0 ? html : `<p style="color: var(--text-muted); font-size: 0.85rem;">No users match this filter.</p>`;
+function confirmAssignVideoSubject() {
+    const docId = document.getElementById('assignVideoDocId').value;
+    const newSubject = document.getElementById('assignVideoSubjectDropdown').value;
+    if (!newSubject) { alert("Please select a subject from the dropdown."); return; }
+    db.collection('videos').doc(docId).update({ subject: newSubject }).then(() => {
+        alert(`✅ Video assigned to ${newSubject}!`);
+        closeAssignVideoSubjectModal();
+        fetchAdminVideos();
     });
 }
