@@ -2338,24 +2338,25 @@ function loadStudyVideos() {
             let embedUrl = convertYouTubeUrlToEmbed(v.url);
             const safeTitle = (v.title || '').replace(/'/g, "\\'");
             
+            // Renders as a clean grid card with a thumbnail preview frame that triggers the watch modal cleanly
             html += `
-                <div class="yt-video-card">
-                    <div class="yt-black-preview" onclick="openVideoWatchModal('${embedUrl}', '${safeTitle}')">
-                        <div class="yt-play-overlay">
-                            <div class="yt-play-circle"><i class="fa-solid fa-play"></i></div>
+                <div style="background: var(--card-bg); border: 1px solid var(--border-color); border-radius: 8px; overflow: hidden; display: flex; flex-direction: column; cursor: pointer; transition: transform 0.2s;" onclick="openVideoWatchModal('${embedUrl}', '${safeTitle}')" onmouseover="this.style.transform='translateY(-3px)'" onmouseout="this.style.transform='translateY(0)'">
+                    <div style="background: #000000; width: 100%; aspect-ratio: 16/9; position: relative; display: flex; align-items: center; justify-content: center; overflow: hidden;">
+                        <div style="position: absolute; inset: 0; background: rgba(0,0,0,0.3); display: flex; align-items: center; justify-content: center;">
+                            <div style="width: 44px; height: 44px; background: var(--naija-green); color: white; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 1rem; box-shadow: 0 4px 10px rgba(0,0,0,0.3);">
+                                <i class="fa-solid fa-play"></i>
+                            </div>
                         </div>
                     </div>
-                    <div class="yt-card-body">
-                        <span style="font-size: 0.75rem; color: var(--naija-green); font-weight: bold;">${v.subject} (${v.year || '2026'})</span>
-                        <h4 style="font-size: 0.9rem; font-weight: bold; margin-bottom: auto;">${v.title}</h4>
-                        <div class="yt-action-bar">
-                            <button onclick="openVideoWatchModal('${embedUrl}', '${safeTitle}')" class="yt-action-btn" style="width: 100%; justify-content: center;"><i class="fa-solid fa-play"></i> Watch Video Lesson</button>
-                        </div>
+                    <div style="padding: 12px; display: flex; flex-direction: column; gap: 4px; flex: 1;">
+                        <span style="font-size: 0.72rem; color: var(--naija-green); font-weight: bold; text-transform: uppercase;">${v.subject} (${v.year || '2026'})</span>
+                        <h4 style="font-size: 0.88rem; font-weight: bold; color: var(--text-color); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;">${v.title}</h4>
                     </div>
                 </div>
             `;
         });
-        container.innerHTML = html ? `<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px;">${html}</div>` : `<p class="muted-text">No published video tutorials available.</p>`;
+        
+        container.innerHTML = html ? `<div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 16px; margin-top: 10px;">${html}</div>` : `<p class="muted-text">No published video tutorials available.</p>`;
     });
 }
 
