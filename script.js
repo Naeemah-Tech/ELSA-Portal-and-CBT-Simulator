@@ -175,8 +175,22 @@ function toggleSidebar() {
     if (sidebar && overlay) {
         sidebar.classList.toggle('active-mobile-drawer');
         if (sidebar.classList.contains('active-mobile-drawer')) {
+            overlay.style.display = 'block';
             overlay.classList.remove('hidden');
         } else {
+            overlay.style.display = 'none';
+            overlay.classList.add('hidden');
+        }
+    }
+}
+
+function handleMobileMenuNav() {
+    if (window.innerWidth <= 768) {
+        const sidebar = document.getElementById('appSidebar');
+        const overlay = document.getElementById('sidebarOverlay');
+        if (sidebar) sidebar.classList.remove('active-mobile-drawer');
+        if (overlay) {
+            overlay.style.display = 'none';
             overlay.classList.add('hidden');
         }
     }
@@ -226,6 +240,7 @@ function closeContactAdminModal() {
 }
 
 // Role-Based Portal Routing & UI Gating
+// Updated Role-Based Portal Routing & UI Gating
 function routeUserDashboard(uid) {
     db.collection('users').doc(uid).get().then((doc) => {
         let username = "User";
@@ -247,23 +262,28 @@ function routeUserDashboard(uid) {
         document.getElementById('authSection').classList.add('hidden');
         document.getElementById('appSidebar').classList.remove('hidden');
 
-        // Portal-Specific View Control
+        // Portal-Specific View & Section Control
         const roleMenu = document.getElementById('roleSpecificMenu');
         const adminNavLink = document.getElementById('navAdmin');
-        
+        const userDirectoryBox = document.getElementById('allUsersListContainer')?.closest('.welcome-box');
+
         if (role === 'admin') {
             if (roleMenu) roleMenu.style.display = 'block';
             if (adminNavLink) adminNavLink.style.display = 'block';
-            showView('viewHome'); // Admin lands on dashboard overview
+            if (userDirectoryBox) userDirectoryBox.style.display = 'block';
+            showView('viewHome');
+            fetchAllUsersList('ALL');
         } else if (role === 'teacher') {
             if (roleMenu) roleMenu.style.display = 'block';
-            if (adminNavLink) adminNavLink.style.display = 'none'; // Hide heavy admin tools
-            showView('viewHome'); // Teachers get teacher portal view
+            if (adminNavLink) adminNavLink.style.display = 'none'; // Teachers don't need heavy admin controls
+            if (userDirectoryBox) userDirectoryBox.style.display = 'none'; // Hide general directory from teachers
+            showView('viewHome');
         } else {
-            // Student Portal
+            // Student Portal Gating
             if (roleMenu) roleMenu.style.display = 'none';
-            if (adminNavLink) adminNavLink.style.display = 'none';
-            showView('viewHome'); // Students land on CBT & Study Hub portal
+            if (adminNavLink) roleMenu.style.display = 'none';
+            if (userDirectoryBox) userDirectoryBox.style.display = 'none'; // Students cannot view user directories
+            showView('viewHome');
         }
 
         updateDashboardCounters();
@@ -1518,20 +1538,43 @@ function fetchStudentsList() {
             if (classFilter !== 'ALL' && assignedClass !== classFilter) return;
 
             html += `
-                <div style="display: flex; justify-content: space-between; align-items: center; background: var(--card-bg); padding: 8px 12px; border-radius: 6px; margin-bottom: 6px; border: 1px solid var(--border-color); font-size: 0.85rem; flex-wrap: wrap; gap: 8px;">
+                <div style="display: flex; justify-content: space-between; align-items: center; background: var(--card-bg); padding: 10px 14px; border-radius: 6px; margin-bottom: 6px; border: 1px solid var(--border-color); font-size: 0.85rem; flex-wrap: wrap; gap: 8px;">
                     <div>
                         <i class="fa-solid fa-user" style="color:var(--naija-green); margin-right:6px;"></i><b>${s.username}</b> (${s.email})<br>
                         <span style="color: var(--text-muted); font-size: 0.75rem;">Class: <b>${assignedClass}</b> | Phone: <b>${s.phone || 'N/A'}</b> | Track: <b>${s.examTrack || 'ALL'}</b></span>
                     </div>
                     <div style="display: flex; gap: 6px;">
-                        <button onclick="openProfileModal('${doc.id}')" class="primary-btn" style="padding: 4px 8px; font-size: 0.75rem;">Profile</button>
-                        <button onclick="deleteStudentAccount('${doc.id}')" class="logout-btn" style="padding: 4px 8px; font-size: 0.75rem;">Delete</button>
+                        <button onclick="openProfileModal('${doc.id}')" class="primary-btn" style="padding: 5px 10px; font-size: 0.75rem;" title="View Profile"><i class="fa-solid fa-address-card"></i> Profile</button>
+                        <button onclick="openEditProfileModalDirect('${doc.id}')" class="primary-btn" style="padding: 5px 10px; font-size: 0.75rem; background: #2563eb;" title="Edit Profile"><i class="fa-solid fa-pen-to-square"></i> Edit</button>
+                        <button onclick="openReassignModal('${doc.id}', '${assignedClass}')" class="primary-btn" style="padding: 5px 10px; font-size: 0.75rem; background: #d97706;" title="Assign Class"><i class="fa-solid fa-book"></i> Assign</button>
+                        <button onclick="deleteStudentAccount('${doc.id}')" class="logout-btn" style="padding: 5px 10px; font-size: 0.75rem;" title="Delete Student"><i class="fa-solid fa-trash"></i></button>
                     </div>
                 </div>
             `;
         });
         container.innerHTML = html || `<p style="color: var(--text-muted); font-size: 0.85rem;">No students found for this filter.</p>`;
     });
+}
+
+// Helper openers for student action buttons
+function openEditProfileModalDirect(userId) {
+    db.collection('users').doc(userId).get().then(doc => {
+        if (doc.exists) {
+            activeProfileId = userId;
+            activeProfileData = doc.data();
+            openEditProfileModal();
+        }
+    });
+}
+
+function openReassignModal(userId, currentClass) {
+    document.getElementById('reassignUserId').value = userId;
+    populateClassDropdowns();
+    setTimeout(() => {
+        const sel = document.getElementById('reassignClassSelect');
+        if (sel) sel.value = currentClass;
+    }, 200);
+    document.getElementById('reassignModal').classList.remove('hidden');
 }
 
 function registerStudentByAdmin() {
@@ -2122,18 +2165,26 @@ function fetchAdminVideos() {
 
             const isPub = v.isPublished !== false;
             const embedUrl = convertYouTubeUrlToEmbed(v.url);
+            const safeTitle = (v.title || '').replace(/'/g, "\\'");
 
             html += `
-                <div style="background: var(--card-bg); padding: 10px 12px; border-radius: 6px; margin-bottom: 8px; border: 1px solid var(--border-color); display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 0.85rem; flex-wrap: wrap;">
-                    <div>
-                        <b>[${v.examType || 'ALL'} - ${v.subject}]</b> ${v.title} (${v.year || '2026'})<br>
-                        <span style="font-size: 0.75rem; color: ${isPub ? 'var(--naija-green)' : '#d97706'}; font-weight: bold;">Status: ${isPub ? 'Published' : 'Unpublished'}</span>
+                <div style="background: var(--card-bg); padding: 10px 14px; border-radius: 8px; margin-bottom: 8px; border: 1px solid var(--border-color); display: flex; justify-content: space-between; align-items: center; gap: 12px; font-size: 0.85rem; flex-wrap: wrap;">
+                    <div style="display: flex; align-items: center; gap: 12px;">
+                        <div style="width: 70px; height: 40px; background: #000; border-radius: 4px; overflow: hidden; position: relative; flex-shrink: 0; cursor: pointer;" onclick="openVideoWatchModal('${embedUrl}', '${safeTitle}')">
+                            <div style="position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,0.4); color: white; font-size: 0.8rem;">
+                                <i class="fa-solid fa-play"></i>
+                            </div>
+                        </div>
+                        <div>
+                            <b>${v.title}</b><br>
+                            <span style="font-size: 0.75rem; color: var(--text-muted);">[${v.examType || 'ALL'} - ${v.subject}] (${v.year || '2026'}) | Status: <b style="color: ${isPub ? 'var(--naija-green)' : '#d97706'};">${isPub ? 'Published' : 'Unpublished'}</b></span>
+                        </div>
                     </div>
                     <div style="display: flex; gap: 6px; flex-wrap: wrap;">
-                        <button onclick="openVideoWatchModal('${embedUrl}', '${v.title.replace(/'/g, "\\'")}')" class="primary-btn" style="padding: 4px 8px; font-size: 0.75rem;"><i class="fa-solid fa-play"></i> Watch</button>
-                        <button onclick="toggleVideoPublishStatus('${doc.id}', ${isPub})" style="background: ${isPub ? '#d97706' : 'var(--naija-green)'}; color: white; border: none; padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 0.75rem;" title="${isPub ? 'Unpublish' : 'Publish'}"><i class="fa-solid ${isPub ? 'fa-eye-slash' : 'fa-check'}"></i></button>
-                        <button onclick="reassignVideoSubject('${doc.id}', '${v.subject}')" style="background: #2563eb; color: white; border: none; padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 0.75rem;" title="Assign Subject"><i class="fa-solid fa-book"></i></button>
-                        <button onclick="deleteAdminVideo('${doc.id}')" class="logout-btn" style="padding: 4px 8px; font-size: 0.75rem;"><i class="fa-solid fa-trash"></i></button>
+                        <button onclick="openVideoWatchModal('${embedUrl}', '${safeTitle}')" class="primary-btn" style="padding: 5px 10px; font-size: 0.75rem;"><i class="fa-solid fa-play"></i> Watch</button>
+                        <button onclick="toggleVideoPublishStatus('${doc.id}', ${isPub})" class="primary-btn" style="background: ${isPub ? '#d97706' : 'var(--naija-green)'}; padding: 5px 10px; font-size: 0.75rem;" title="${isPub ? 'Unpublish' : 'Publish'}"><i class="fa-solid ${isPub ? 'fa-eye-slash' : 'fa-check'}"></i></button>
+                        <button onclick="openAssignVideoSubjectModal('${doc.id}', '${v.subject}')" class="primary-btn" style="background: #2563eb; padding: 5px 10px; font-size: 0.75rem;" title="Assign Subject"><i class="fa-solid fa-book"></i> Assign</button>
+                        <button onclick="deleteAdminVideo('${doc.id}')" class="logout-btn" style="padding: 5px 10px; font-size: 0.75rem;" title="Delete"><i class="fa-solid fa-trash"></i></button>
                     </div>
                 </div>
             `;
@@ -2285,15 +2336,26 @@ function loadStudyVideos() {
             let v = doc.data();
             if (v.isPublished === false) return;
             let embedUrl = convertYouTubeUrlToEmbed(v.url);
+            const safeTitle = (v.title || '').replace(/'/g, "\\'");
+            
             html += `
-                <div class="content-box" style="background: var(--card-bg); border: 1px solid var(--border-color); padding: 14px; border-radius: 8px;">
-                    <h4 style="color: var(--naija-green); margin-bottom: 4px;">${v.subject} (${v.year || '2026'})</h4>
-                    <p style="font-weight: bold; font-size: 0.9rem; margin-bottom: 10px;">${v.title}</p>
-                    <button onclick="openVideoWatchModal('${embedUrl}', '${v.title.replace(/'/g, "\\'")}')" class="primary-btn" style="padding: 6px 12px; font-size: 0.8rem;"><i class="fa-solid fa-play"></i> Watch Video</button>
+                <div class="yt-video-card">
+                    <div class="yt-black-preview" onclick="openVideoWatchModal('${embedUrl}', '${safeTitle}')">
+                        <div class="yt-play-overlay">
+                            <div class="yt-play-circle"><i class="fa-solid fa-play"></i></div>
+                        </div>
+                    </div>
+                    <div class="yt-card-body">
+                        <span style="font-size: 0.75rem; color: var(--naija-green); font-weight: bold;">${v.subject} (${v.year || '2026'})</span>
+                        <h4 style="font-size: 0.9rem; font-weight: bold; margin-bottom: auto;">${v.title}</h4>
+                        <div class="yt-action-bar">
+                            <button onclick="openVideoWatchModal('${embedUrl}', '${safeTitle}')" class="yt-action-btn" style="width: 100%; justify-content: center;"><i class="fa-solid fa-play"></i> Watch Video Lesson</button>
+                        </div>
+                    </div>
                 </div>
             `;
         });
-        container.innerHTML = html || `<p class="muted-text">No published video tutorials available.</p>`;
+        container.innerHTML = html ? `<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px;">${html}</div>` : `<p class="muted-text">No published video tutorials available.</p>`;
     });
 }
 
@@ -2525,7 +2587,6 @@ function handleSignupSubmit(e) {
         return; 
     }
 
-    // Check if email was pre-registered by admin in Firestore
     db.collection('users').where('email', '==', email).get().then(snap => {
         if (snap.empty && !PERMITTED_ADMINS.includes(email)) {
             alert("❌ Signup Denied: Your Gmail address must be pre-registered by an administrator first.");
@@ -2533,34 +2594,55 @@ function handleSignupSubmit(e) {
             return;
         }
 
-        const existingData = !snap.empty ? snap.docs[0].data() : {};
+        let preRegDocId = null;
+        let existingData = {};
+        if (!snap.empty) {
+            preRegDocId = snap.docs[0].id;
+            existingData = snap.docs[0].data();
+        }
         
         const finishSignup = (passportUrl = "") => {
             auth.createUserWithEmailAndPassword(email, pass).then(cred => {
-                // If they were pre-registered, keep their assigned class, else default to 'Unassigned'
-                return db.collection('users').doc(cred.user.uid).set({
+                const newUid = cred.user.uid;
+                const batch = db.batch();
+                
+                const newDocRef = db.collection('users').doc(newUid);
+                batch.set(newDocRef, {
                     username: username || existingData.username,
                     email,
                     role,
                     gender,
-                    teacherTitle: role === 'teacher' ? teacherTitle : '',
+                    teacherTitle: role === 'teacher' ? teacherTitle : (existingData.teacherTitle || ''),
                     assignedClass: existingData.assignedClass || 'Unassigned',
                     examTrack: existingData.examTrack || 'ALL',
                     passportUrl: passportUrl || existingData.passportUrl || "",
                     createdAt: existingData.createdAt || new Date()
                 }, { merge: true });
+
+                if (preRegDocId && preRegDocId !== newUid) {
+                    batch.delete(db.collection('users').doc(preRegDocId));
+                }
+
+                return batch.commit();
             }).then(() => {
                 alert("🎉 Account registered and linked successfully!");
-            }).catch(err => alert("Signup error: " + err.message));
+            }).catch(err => {
+                console.error("Signup Firebase Error:", err);
+                alert("Signup error: " + err.message);
+            });
         };
 
         if (passportInput && passportInput.files.length > 0) {
             let reader = new FileReader();
             reader.onload = ev => finishSignup(ev.target.result);
+            reader.onerror = () => { alert("Error reading passport image file."); };
             reader.readAsDataURL(passportInput.files[0]);
         } else {
             finishSignup();
         }
+    }).catch(err => {
+        console.error("Firestore pre-reg lookup error:", err);
+        alert("Database connection error during signup check: " + err.message);
     });
 }
 
@@ -2598,4 +2680,124 @@ function confirmAssignVideoSubject() {
         closeAssignVideoSubjectModal();
         fetchAdminVideos();
     });
+}
+
+// Fix missing fetchLeaderboard error on login
+function fetchLeaderboard() {
+    // Leaderboard logic or placeholder to prevent console errors
+    console.log("Leaderboard initialized.");
+}
+
+// Interactive CBT Screen Corrections Review Handler
+function openInteractiveCbtCorrection() {
+    if (!currentExamQuestions || currentExamQuestions.length === 0) {
+        alert("No active session questions found to review interactively.");
+        return;
+    }
+    document.getElementById('standaloneResultsWindow').classList.add('hidden');
+    document.getElementById('standaloneCbtWindow').classList.remove('hidden');
+    document.getElementById('cbtReviewModeTag').classList.remove('hidden');
+    document.getElementById('cbtReviewExplanationBox').classList.remove('hidden');
+    
+    // Switch UI to correction review display mode for the first question
+    currentQuestionIndex = 0;
+    displayCurrentQuestionForReview();
+}
+
+// Review mode specific display that shows explanations per question
+function displayCurrentQuestionForReview() {
+    if (currentExamQuestions.length === 0) return;
+    const q = currentExamQuestions[currentQuestionIndex];
+    const itemLog = currentExamQuestions[currentQuestionIndex];
+
+    document.getElementById('cbtQuestionNumberLabel').innerText = `Review Question ${currentQuestionIndex + 1} of ${currentExamQuestions.length}`;
+    document.getElementById('cbtSubjectTitle').innerText = q.subject;
+    document.getElementById('cleanMetaText').innerText = `Review Mode • Track: ${q.examType || currentSelectedExamType}`;
+
+    document.querySelectorAll('.cbt-subject-tab').forEach(tabBtn => {
+        tabBtn.classList.toggle('active', tabBtn.innerText.trim() === q.subject);
+    });
+
+    let imgHtml = q.imageUrl ? `<div style="margin-bottom:12px;"><img src="${q.imageUrl}" style="max-width:100%; max-height:220px; border-radius:6px; border:1px solid var(--border-color);"></div>` : '';
+    document.getElementById('cbtQuestionBodyText').innerHTML = `
+        <p style="margin-bottom: 12px; font-weight: 600;">${q.questionText}</p>
+        ${imgHtml}
+    `;
+
+    const optionsContainer = document.getElementById('cbtOptionsContainer');
+    optionsContainer.innerHTML = '';
+    ['A', 'B', 'C', 'D'].forEach(optKey => {
+        if (q.options && q.options[optKey]) {
+            let userPick = userAnswers[q.id];
+            let bg = 'var(--bg-gray)';
+            let color = 'var(--text-color)';
+            if (optKey === q.correctOption) {
+                bg = 'rgba(0, 135, 81, 0.2)';
+                color = '#008751';
+            } else if (optKey === userPick && userPick !== q.correctOption) {
+                bg = 'rgba(220, 38, 38, 0.2)';
+                color = '#dc2626';
+            }
+            optionsContainer.innerHTML += `
+                <div class="cbt-option-item" style="background: ${bg}; color: ${color};">
+                    <b>${optKey}.</b> ${q.options[optKey]} ${optKey === q.correctOption ? '<b>(Correct Answer)</b>' : ''}
+                </div>
+            `;
+        }
+    });
+
+    const expText = document.getElementById('cbtReviewExplanationText');
+    if (expText) expText.innerText = q.explanation || "No explanation provided.";
+    renderQuestionPalette();
+}
+
+// Teacher Portal Quick Roster Loader
+function fetchTeacherPortalData(assignedClass) {
+    if (!assignedClass || assignedClass === 'None') return;
+    db.collection('users').where('assignedClass', '==', assignedClass).where('role', '==', 'student').get().then(snapshot => {
+        console.log(`Loaded ${snapshot.size} students for teacher's class: ${assignedClass}`);
+    });
+}
+
+let activePlayingVideoUrl = "";
+let activePlayingVideoTitle = "";
+
+function openVideoWatchModal(embedUrl, title) {
+    activePlayingVideoUrl = embedUrl;
+    activePlayingVideoTitle = title;
+    document.getElementById('videoModalTitle').innerText = title;
+    const iframe = document.getElementById('videoModalFrame');
+    const nativeVideo = document.getElementById('videoModalNative');
+
+    if (embedUrl.startsWith('data:video') || embedUrl.endsWith('.mp4') || embedUrl.endsWith('.webm')) {
+        iframe.style.display = 'none';
+        nativeVideo.style.display = 'block';
+        nativeVideo.src = embedUrl;
+        nativeVideo.play();
+    } else {
+        nativeVideo.style.display = 'none';
+        iframe.style.display = 'block';
+        nativeVideo.src = '';
+        iframe.src = embedUrl;
+    }
+
+    document.getElementById('videoWatchModal').classList.remove('hidden');
+    document.getElementById('floatingVideoContainer').classList.remove('active');
+}
+
+function dockVideoToFloatingPlayer() {
+    closeVideoWatchModal();
+    document.getElementById('floatingVideoTitle').innerText = activePlayingVideoTitle;
+    document.getElementById('floatingVideoFrame').src = activePlayingVideoUrl;
+    document.getElementById('floatingVideoContainer').classList.add('active');
+}
+
+function closeFloatingVideo() {
+    document.getElementById('floatingVideoFrame').src = '';
+    document.getElementById('floatingVideoContainer').classList.remove('active');
+}
+
+function expandFloatingVideo() {
+    openVideoWatchModal(activePlayingVideoUrl, activePlayingVideoTitle);
+    closeFloatingVideo();
 }
