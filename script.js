@@ -885,110 +885,52 @@ function submitExamManually() {
 }
 
 function renderExamSlipUI(examType, percentage, scaledScore, subjectStats, timeUsedStr, dateLabel, reviewLogArray) {
-    document.getElementById('overallPercentageBadge').innerText = `${percentage}%`;
-    document.getElementById('resultsTimestamp').innerText = `Completed in ${timeUsedStr} on ${dateLabel}`;
-
-    let gradeStatusText = "";
-    if (examType === 'JAMB') {
-        document.getElementById('resTotalScore').innerText = `${scaledScore} / 400`;
-        document.getElementById('resScoreHeaderLabel').innerText = `JAMB SCORE (/400)`;
-        gradeStatusText = scaledScore >= 200 ? "PASSED (ADMISSIBLE)" : "NEEDS IMPROVEMENT";
-    } else {
-        let overallGradeObj = getWaecNecoGrade(percentage);
-        document.getElementById('resTotalScore').innerText = `${overallGradeObj.grade} (${percentage}%)`;
-        document.getElementById('resScoreHeaderLabel').innerText = `${examType} SCORE / GRADE`;
-        gradeStatusText = `${overallGradeObj.grade} - ${overallGradeObj.remark} (${overallGradeObj.status})`;
-    }
-    document.getElementById('resGradeStatus').innerText = gradeStatusText;
-
-    let weakestSub = "None";
-    let lowestPercentage = 101;
-    let breakdownHTML = '';
-
-    for (let sub in subjectStats) {
-        let subCorrect = subjectStats[sub].correct;
-        let subTotal = subjectStats[sub].total;
-        let subAcc = Math.round((subCorrect / subTotal) * 100);
-        if (subAcc < lowestPercentage) {
-            lowestPercentage = subAcc;
-            weakestSub = sub;
+    // Automatically trigger the interactive CBT correction view instead of showing the slip
+    currentExamQuestions = reviewLogArray.map(item => ({
+        id: item.number,
+        subject: item.subject,
+        questionText: item.questionText,
+        imageUrl: item.imageUrl || "",
+        options: item.options || {},
+        correctOption: item.correctOption,
+        explanation: item.explanation || "No explanation provided.",
+        examType: examType
+    }));
+    
+    userAnswers = {};
+    reviewLogArray.forEach((item, idx) => {
+        if (item.userChoice && item.userChoice !== "NONE") {
+            userAnswers[item.number ? item.number - 1 : idx] = item.userChoice;
         }
-        let subExtraInfo = examType !== 'JAMB' ? ` | Grade: <b>${getWaecNecoGrade(subAcc).grade}</b>` : "";
-        breakdownHTML += `
-            <div style="display: flex; justify-content: space-between; align-items: center; background: var(--bg-gray); padding: 8px 12px; border-radius: 6px; font-size: 0.85rem; margin-bottom: 4px;">
-                <span><b>${sub}</b> (${subCorrect}/${subTotal})${subExtraInfo}</span>
-                <span style="font-weight: bold; color: ${subAcc >= 50 ? 'var(--naija-green)' : '#dc2626'};">${subAcc}%</span>
-            </div>
-        `;
-    }
-    document.getElementById('resWeakSubject').innerText = weakestSub === "None" ? "None" : `${weakestSub} (${lowestPercentage}%)`;
-    document.getElementById('resSubjectBreakdownList').innerHTML = breakdownHTML;
+    });
 
-    // Detailed CBT Corrections Review with Color-Coding & Explanation Modal Button
-    let reviewHTML = '';
-    if (reviewLogArray && reviewLogArray.length > 0) {
-        reviewLogArray.forEach((item, index) => {
-            let optionsReviewHTML = '';
-            ['A', 'B', 'C', 'D'].forEach(optKey => {
-                if (item.options && item.options[optKey]) {
-                    let bg = 'var(--bg-gray)';
-                    let color = 'var(--text-color)';
-                    let border = '1px solid var(--border-color)';
-                    let statusTag = '';
+    // Launch standalone CBT screen in Marked Review Mode
+    document.getElementById('standaloneResultsWindow').classList.add('hidden');
+    document.getElementById('standaloneCbtWindow').classList.remove('hidden');
+    document.getElementById('cbtReviewModeTag').classList.remove('hidden');
+    document.getElementById('cbtReviewExplanationBox').classList.remove('hidden');
+    document.getElementById('standaloneExamBadge').innerText = `${examType} MARKED CORRECTIONS`;
+    
+    // Change exit button label to close/exit review
+    const exitBtn = document.getElementById('cbtExitBtn');
+    if (exitBtn) exitBtn.setAttribute('onclick', 'closeStandaloneResultsWindow()');
 
-                    if (optKey === item.correctOption) {
-                        bg = 'rgba(0, 135, 81, 0.15)';
-                        color = '#008751';
-                        border = '1px solid #008751';
-                        statusTag = ' <b>(Correct Answer ✓)</b>';
-                    }
-                    if (optKey === item.userChoice && !item.isCorrect) {
-                        bg = 'rgba(220, 38, 38, 0.15)';
-                        color = '#dc2626';
-                        border = '1px solid #dc2626';
-                        statusTag = ' <b>(Your Pick - Wrong ✗)</b>';
-                    } else if (optKey === item.userChoice && item.isCorrect) {
-                        statusTag = ' <b>(Your Pick - Correct ✓)</b>';
-                    }
-
-                    optionsReviewHTML += `
-                        <div style="padding: 8px 12px; border-radius: 6px; margin-bottom: 6px; background: ${bg}; color: ${color}; border: ${border}; font-size: 0.85rem;">
-                            <b>${optKey}.</b> ${item.options[optKey]} ${statusTag}
-                        </div>
-                    `;
-                }
-            });
-
-            let imgBlock = item.imageUrl ? `<div style="margin: 8px 0;"><img src="${item.imageUrl}" style="max-width: 100%; max-height: 180px; border-radius: 6px;"></div>` : '';
-            let safeExplanation = (item.explanation || "No explanation available.").replace(/'/g, "\\'").replace(/"/g, '&quot;');
-
-            reviewHTML += `
-                <div style="padding: 14px; border-bottom: 1px solid var(--border-color); background: var(--card-bg); margin-bottom: 10px; border-radius: 8px; border-left: 4px solid ${item.isCorrect ? 'var(--naija-green)' : '#dc2626'};">
-                    <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; margin-bottom: 8px;">
-                        <p style="font-weight: bold; font-size: 0.9rem; color: var(--text-color);">
-                            ${item.number || index + 1}. [${item.subject}] ${item.questionText}
-                        </p>
-                        <span style="font-size: 0.75rem; font-weight: bold; padding: 2px 8px; border-radius: 4px; background: ${item.isCorrect ? 'var(--naija-green-light)' : '#fee2e2'}; color: ${item.isCorrect ? 'var(--naija-green-dark)' : '#dc2626'}; white-space: nowrap;">
-                            ${item.isCorrect ? 'Correct ✓' : 'Wrong ✗'}
-                        </span>
-                    </div>
-                    ${imgBlock}
-                    <div style="margin-bottom: 10px;">${optionsReviewHTML}</div>
-                    <button onclick="openExplanationModal('${item.correctOption}', '${safeExplanation}')" class="primary-btn" style="background: #2563eb; padding: 6px 12px; font-size: 0.8rem;">
-                        <i class="fa-solid fa-lightbulb"></i> View Explanation
-                    </button>
-                </div>
-            `;
-        });
-    } else {
-        reviewHTML = `<p style="color: var(--text-muted); font-size: 0.85rem;">Detailed question log was not archived for this legacy session.</p>`;
-    }
-
-    document.getElementById('resDetailedReviewList').innerHTML = reviewHTML;
+    currentQuestionIndex = 0;
+    displayCurrentQuestionForReview();
 }
 
 function closeStandaloneResultsWindow() {
+    clearInterval(timerInterval);
+    isExamActive = false;
     document.getElementById('standaloneResultsWindow').classList.add('hidden');
+    document.getElementById('standaloneCbtWindow').classList.add('hidden');
+    document.getElementById('cbtReviewModeTag').classList.add('hidden');
+    document.getElementById('cbtReviewExplanationBox').classList.add('hidden');
+    
+    // Restore submit button visibility for future exams
+    const submitBtn = document.getElementById('cbtSubmitExamBtn');
+    if (submitBtn) submitBtn.style.display = 'block';
+
     showView('viewHome');
 }
 
@@ -2425,50 +2367,65 @@ function renderStudyHubInterface() {
     const container = document.getElementById('studyQuestionsContainer');
     if (!container || studyQuestionsList.length === 0) return;
 
-    const q = studyQuestionsList[studyCurrentIndex];
-    const questionNumber = studyCurrentIndex + 1;
-    let imgHtml = q.imageUrl ? `<div style="margin-bottom:10px;"><img src="${q.imageUrl}" style="max-width:100%; max-height:220px; border-radius:6px;"></div>` : '';
-    
-    let optionsHtml = '';
-    ['A', 'B', 'C', 'D'].forEach(optKey => {
-        if (q.options && q.options[optKey]) {
-            let isSelected = studyUserAnswers[studyCurrentIndex] === optKey;
-            optionsHtml += `
-                <div onclick="selectStudyOption(${studyCurrentIndex}, '${optKey}')" class="cbt-option-item ${isSelected ? 'selected' : ''}" style="cursor: pointer; padding: 8px 12px; margin-bottom: 6px; border-radius: 6px; border: 1px solid var(--border-color);">
-                    <b>${optKey}.</b> ${q.options[optKey]}
+    let questionsHtml = '';
+    studyQuestionsList.forEach((q, idx) => {
+        let qNum = idx + 1;
+        let imgHtml = q.imageUrl ? `<div style="margin-bottom:12px;"><img src="${q.imageUrl}" style="max-width:100%; max-height:200px; border-radius:6px;"></div>` : '';
+        
+        let optionsHtml = '';
+        ['A', 'B', 'C', 'D'].forEach(optKey => {
+            if (q.options && q.options[optKey]) {
+                let isCorrect = optKey === q.correctOption;
+                let bg = isCorrect ? 'rgba(0, 135, 81, 0.12)' : 'var(--bg-gray)';
+                let color = isCorrect ? '#008751' : 'var(--text-color)';
+                let border = isCorrect ? '1px solid #008751' : '1px solid var(--border-color)';
+                let boldTag = isCorrect ? ' <b>(Correct Answer ✓)</b>' : '';
+                
+                optionsHtml += `
+                    <div style="padding: 10px 14px; margin-bottom: 6px; border-radius: 6px; border: ${border}; background: ${bg}; color: ${color}; font-size: 0.9rem;">
+                        <b>${optKey}.</b> ${q.options[optKey]} ${boldTag}
+                    </div>
+                `;
+            }
+        });
+
+        let safeExplanation = (q.explanation || "No explanation provided.").replace(/'/g, "\\'").replace(/"/g, '&quot;');
+
+        questionsHtml += `
+            <div id="study_q_card_${idx}" class="content-box" style="background: var(--card-bg); border: 1px solid var(--border-color); padding: 24px; border-radius: 10px; margin-bottom: 20px; box-shadow: 0 2px 6px rgba(0,0,0,0.02);">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; border-bottom: 1px solid var(--border-color); padding-bottom: 8px;">
+                    <span class="brand-badge" style="font-size: 0.75rem; background: var(--naija-green-light); color: var(--naija-green-dark);">${q.examType || 'GENERAL'} • ${q.subject}</span>
+                    <span style="font-size: 0.8rem; font-weight: bold; color: var(--text-muted);">Year: ${q.year || '2026'} | Question ${qNum} of ${studyQuestionsList.length}</span>
                 </div>
-            `;
-        }
+                <p style="font-weight: bold; font-size: 1rem; margin-bottom: 14px; color: var(--text-color);">${qNum}. ${q.questionText}</p>
+                ${imgHtml}
+                <div style="margin-bottom: 16px;">${optionsHtml}</div>
+                <div style="background: var(--bg-gray); border-left: 4px solid #2563eb; padding: 12px 14px; border-radius: 6px; font-size: 0.9rem;">
+                    <b style="color: #2563eb;"><i class="fa-solid fa-lightbulb"></i> Solution & Explanation:</b>
+                    <p style="margin-top: 4px; color: var(--text-color);">${q.explanation || 'No explanation provided.'}</p>
+                </div>
+            </div>
+        `;
     });
 
     let paletteHtml = '';
     studyQuestionsList.forEach((item, idx) => {
-        let status = studyUserAnswers[idx] ? 'answered' : '';
-        if (idx === studyCurrentIndex) status += ' current';
-        paletteHtml += `<button onclick="jumpStudyQuestion(${idx})" class="palette-num-btn ${status}" style="width: 32px; height: 32px; font-size: 0.8rem; border-radius: 4px; border: 1px solid var(--border-color); background: var(--card-bg); color: var(--text-color); cursor: pointer;">${idx + 1}</button>`;
+        paletteHtml += `
+            <button onclick="document.getElementById('study_q_card_${idx}').scrollIntoView({ behavior: 'smooth', block: 'center' });" style="padding: 8px 0; font-size: 0.85rem; border-radius: 6px; border: 1px solid var(--border-color); background: var(--card-bg); color: var(--text-color); cursor: pointer; font-weight: bold; transition: all 0.2s;" onmouseover="this.style.background='var(--naija-green)'; this.style.color='#fff';" onmouseout="this.style.background='var(--card-bg)'; this.style.color='var(--text-color)';">${idx + 1}</button>
+        `;
     });
 
-    let safeExplanation = (q.explanation || "No explanation provided.").replace(/'/g, "\\'").replace(/"/g, '&quot;');
-
     container.innerHTML = `
-        <div style="display: grid; grid-template-columns: 1fr 260px; gap: 16px; align-items: start;">
-            <div class="content-box" style="background: var(--card-bg); border: 1px solid var(--border-color); padding: 20px; border-radius: 8px;">
-                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
-                    <span class="brand-badge" style="font-size: 0.75rem; background: var(--naija-green-light); color: var(--naija-green-dark);">${q.examType || 'GENERAL'} • ${q.subject}</span>
-                    <span style="font-size: 0.75rem; color: var(--text-muted);">Year: ${q.year || '2026'} | Question ${questionNumber} of ${studyQuestionsList.length}</span>
-                </div>
-                <p style="font-weight: bold; margin-bottom: 12px;">${questionNumber}. ${q.questionText}</p>
-                ${imgHtml}
-                <div style="margin-bottom: 14px;">${optionsHtml}</div>
-                <div style="display: flex; gap: 10px;">
-                    <button onclick="navigateStudy(-1)" class="primary-btn" style="background: #4b5563; font-size: 0.8rem; padding: 6px 12px;"><i class="fa-solid fa-arrow-left"></i> Previous</button>
-                    <button onclick="openExplanationModal('${q.correctOption}', '${safeExplanation}')" class="primary-btn" style="background: #2563eb; font-size: 0.8rem; padding: 6px 12px;"><i class="fa-solid fa-lightbulb"></i> Solution</button>
-                    <button onclick="navigateStudy(1)" class="primary-btn" style="font-size: 0.8rem; padding: 6px 12px;">Next <i class="fa-solid fa-arrow-right"></i></button>
-                </div>
+        <div style="display: grid; grid-template-columns: 1fr 300px; gap: 20px; align-items: start; margin-top: 16px;">
+            <div style="display: flex; flex-direction: column; max-height: 80vh; overflow-y: auto; padding-right: 8px;">
+                ${questionsHtml}
             </div>
-            <div style="background: var(--card-bg); padding: 14px; border-radius: 8px; border: 1px solid var(--border-color);">
-                <h4 style="font-size: 0.85rem; color: var(--naija-green); margin-bottom: 8px;">Question Palette</h4>
-                <div style="display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; max-height: 300px; overflow-y: auto;">
+            <div style="background: var(--card-bg); padding: 16px; border-radius: 10px; border: 1px solid var(--border-color); position: sticky; top: 20px; box-shadow: 0 4px 12px rgba(0,0,0,0.03);">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; border-bottom: 1px solid var(--border-color); padding-bottom: 8px;">
+                    <h4 style="font-size: 0.9rem; color: var(--naija-green); font-weight: bold;"><i class="fa-solid fa-compass"></i> Study Navigator</h4>
+                    <span style="font-size: 0.75rem; background: var(--naija-green-light); color: var(--naija-green-dark); padding: 2px 8px; border-radius: 10px; font-weight: bold;">${studyQuestionsList.length} Qs</span>
+                </div>
+                <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; max-height: 400px; overflow-y: auto; padding: 4px;">
                     ${paletteHtml}
                 </div>
             </div>
@@ -2700,24 +2657,23 @@ function openInteractiveCbtCorrection() {
     document.getElementById('cbtReviewModeTag').classList.remove('hidden');
     document.getElementById('cbtReviewExplanationBox').classList.remove('hidden');
     
-    // Switch UI to correction review display mode for the first question
+    // Hide submit button during review mode
+    const submitBtn = document.getElementById('cbtSubmitExamBtn');
+    if (submitBtn) submitBtn.style.display = 'none';
+
     currentQuestionIndex = 0;
     displayCurrentQuestionForReview();
 }
 
-// Review mode specific display that shows explanations per question
 function displayCurrentQuestionForReview() {
     if (currentExamQuestions.length === 0) return;
     const q = currentExamQuestions[currentQuestionIndex];
-    const itemLog = currentExamQuestions[currentQuestionIndex];
+    // Retrieve the user's choice for this specific question index
+    const userPick = userAnswers[q.id] || userAnswers[currentQuestionIndex];
 
-    document.getElementById('cbtQuestionNumberLabel').innerText = `Review Question ${currentQuestionIndex + 1} of ${currentExamQuestions.length}`;
+    document.getElementById('cbtQuestionNumberLabel').innerText = `Marked Question ${currentQuestionIndex + 1} of ${currentExamQuestions.length}`;
     document.getElementById('cbtSubjectTitle').innerText = q.subject;
     document.getElementById('cleanMetaText').innerText = `Review Mode • Track: ${q.examType || currentSelectedExamType}`;
-
-    document.querySelectorAll('.cbt-subject-tab').forEach(tabBtn => {
-        tabBtn.classList.toggle('active', tabBtn.innerText.trim() === q.subject);
-    });
 
     let imgHtml = q.imageUrl ? `<div style="margin-bottom:12px;"><img src="${q.imageUrl}" style="max-width:100%; max-height:220px; border-radius:6px; border:1px solid var(--border-color);"></div>` : '';
     document.getElementById('cbtQuestionBodyText').innerHTML = `
@@ -2729,19 +2685,87 @@ function displayCurrentQuestionForReview() {
     optionsContainer.innerHTML = '';
     ['A', 'B', 'C', 'D'].forEach(optKey => {
         if (q.options && q.options[optKey]) {
-            let userPick = userAnswers[q.id];
             let bg = 'var(--bg-gray)';
             let color = 'var(--text-color)';
+            let border = '1px solid var(--border-color)';
+            let labelTag = '';
+
             if (optKey === q.correctOption) {
-                bg = 'rgba(0, 135, 81, 0.2)';
+                bg = 'rgba(0, 135, 81, 0.15)';
                 color = '#008751';
-            } else if (optKey === userPick && userPick !== q.correctOption) {
-                bg = 'rgba(220, 38, 38, 0.2)';
-                color = '#dc2626';
+                border = '1px solid #008751';
+                labelTag = ' <b>(Correct Answer ✓)</b>';
             }
+            if (optKey === userPick && userPick !== q.correctOption) {
+                bg = 'rgba(220, 38, 38, 0.15)';
+                color = '#dc2626';
+                border = '1px solid #dc2626';
+                labelTag = ' <b>(Your Choice - Wrong ✗)</b>';
+            } else if (optKey === userPick && userPick === q.correctOption) {
+                labelTag = ' <b>(Your Choice - Correct ✓)</b>';
+            }
+
+            // Options are locked and unclickable in review mode
             optionsContainer.innerHTML += `
-                <div class="cbt-option-item" style="background: ${bg}; color: ${color};">
-                    <b>${optKey}.</b> ${q.options[optKey]} ${optKey === q.correctOption ? '<b>(Correct Answer)</b>' : ''}
+                <div class="cbt-option-item" style="background: ${bg}; color: ${color}; border: ${border}; cursor: default; pointer-events: none;">
+                    <b>${optKey}.</b> ${q.options[optKey]} ${labelTag}
+                </div>
+            `;
+        }
+    });
+
+    const expBox = document.getElementById('cbtReviewExplanationBox');
+    const expText = document.getElementById('cbtReviewExplanationText');
+    if (expBox) expBox.classList.remove('hidden');
+    if (expText) expText.innerText = q.explanation || "No explanation provided.";
+
+    renderQuestionPalette();
+}
+
+// Review mode specific display that shows explanations per question
+function displayCurrentQuestionForReview() {
+    if (currentExamQuestions.length === 0) return;
+    const q = currentExamQuestions[currentQuestionIndex];
+    const userPick = userAnswers[currentQuestionIndex];
+
+    document.getElementById('cbtQuestionNumberLabel').innerText = `Marked Question ${currentQuestionIndex + 1} of ${currentExamQuestions.length}`;
+    document.getElementById('cbtSubjectTitle').innerText = q.subject;
+    document.getElementById('cleanMetaText').innerText = `Review Mode • Track: ${q.examType || currentSelectedExamType}`;
+
+    let imgHtml = q.imageUrl ? `<div style="margin-bottom:12px;"><img src="${q.imageUrl}" style="max-width:100%; max-height:220px; border-radius:6px; border:1px solid var(--border-color);"></div>` : '';
+    document.getElementById('cbtQuestionBodyText').innerHTML = `
+        <p style="margin-bottom: 12px; font-weight: 600;">${q.questionText}</p>
+        ${imgHtml}
+    `;
+
+    const optionsContainer = document.getElementById('cbtOptionsContainer');
+    optionsContainer.innerHTML = '';
+    ['A', 'B', 'C', 'D'].forEach(optKey => {
+        if (q.options && q.options[optKey]) {
+            let bg = 'var(--bg-gray)';
+            let color = 'var(--text-color)';
+            let border = '1px solid var(--border-color)';
+            let labelTag = '';
+
+            if (optKey === q.correctOption) {
+                bg = 'rgba(0, 135, 81, 0.15)';
+                color = '#008751';
+                border = '1px solid #008751';
+                labelTag = ' <b>(Correct Answer ✓)</b>';
+            }
+            if (optKey === userPick && userPick !== q.correctOption) {
+                bg = 'rgba(220, 38, 38, 0.15)';
+                color = '#dc2626';
+                border = '1px solid #dc2626';
+                labelTag = ' <b>(Your Choice - Wrong ✗)</b>';
+            } else if (optKey === userPick && userPick === q.correctOption) {
+                labelTag = ' <b>(Your Choice - Correct ✓)</b>';
+            }
+
+            // Options are rendered static and unclickable in review mode
+            optionsContainer.innerHTML += `
+                <div class="cbt-option-item" style="background: ${bg}; color: ${color}; border: ${border}; cursor: default; pointer-events: none;">
+                    <b>${optKey}.</b> ${q.options[optKey]} ${labelTag}
                 </div>
             `;
         }
@@ -2749,6 +2773,11 @@ function displayCurrentQuestionForReview() {
 
     const expText = document.getElementById('cbtReviewExplanationText');
     if (expText) expText.innerText = q.explanation || "No explanation provided.";
+    
+    // Hide submit button during review mode
+    const submitBtn = document.getElementById('cbtSubmitExamBtn');
+    if (submitBtn) submitBtn.style.display = 'none';
+
     renderQuestionPalette();
 }
 
@@ -2801,4 +2830,87 @@ function closeFloatingVideo() {
 function expandFloatingVideo() {
     openVideoWatchModal(activePlayingVideoUrl, activePlayingVideoTitle);
     closeFloatingVideo();
+}
+
+function displayCurrentQuestionForReview() {
+    if (currentExamQuestions.length === 0) return;
+    const q = currentExamQuestions[currentQuestionIndex];
+    
+    // Robust check to find what the user picked (handles both ID keys and index keys)
+    const userPick = userAnswers[q.id] || userAnswers[currentQuestionIndex] || userAnswers[String(currentQuestionIndex)] || "NONE";
+
+    const numLabel = document.getElementById('cbtQuestionNumberLabel');
+    const subjectTitle = document.getElementById('cbtSubjectTitle');
+    const metaText = document.getElementById('cleanMetaText');
+
+    if (numLabel) numLabel.innerText = `Marked Question ${currentQuestionIndex + 1} of ${currentExamQuestions.length}`;
+    if (subjectTitle) subjectTitle.innerText = q.subject;
+    if (metaText) metaText.innerText = `Review Mode • Track: ${q.examType || currentSelectedExamType}`;
+
+    document.querySelectorAll('.cbt-subject-tab').forEach(tabBtn => {
+        tabBtn.classList.toggle('active', tabBtn.innerText.trim() === q.subject);
+    });
+
+    let imgHtml = q.imageUrl ? `<div style="margin-bottom:12px;"><img src="${q.imageUrl}" style="max-width:100%; max-height:220px; border-radius:6px; border:1px solid var(--border-color);"></div>` : '';
+    const bodyText = document.getElementById('cbtQuestionBodyText');
+    if (bodyText) {
+        bodyText.innerHTML = `
+            <p style="margin-bottom: 12px; font-weight: 600;">${q.questionText}</p>
+            ${imgHtml}
+        `;
+    }
+
+    const optionsContainer = document.getElementById('cbtOptionsContainer');
+    if (optionsContainer) {
+        optionsContainer.innerHTML = '';
+        ['A', 'B', 'C', 'D'].forEach(optKey => {
+            if (q.options && q.options[optKey]) {
+                let bg = 'var(--bg-gray)';
+                let color = 'var(--text-color)';
+                let border = '1px solid var(--border-color)';
+                let labelTag = '';
+
+                // Correct answer is always Green
+                if (optKey === q.correctOption) {
+                    bg = 'rgba(0, 135, 81, 0.2)';
+                    color = '#008751';
+                    border = '2px solid #008751';
+                    labelTag = ' <b>(Correct Answer ✓)</b>';
+                }
+                
+                // User picked the wrong option -> Marked Red
+                if (optKey === userPick && userPick !== q.correctOption) {
+                    bg = 'rgba(220, 38, 38, 0.2)';
+                    color = '#dc2626';
+                    border = '2px solid #dc2626';
+                    labelTag = ' <b>(Your Choice - Wrong ✗)</b>';
+                } 
+                // User picked the correct option -> Marked Green
+                else if (optKey === userPick && userPick === q.correctOption) {
+                    labelTag = ' <b>(Your Choice - Correct ✓)</b>';
+                }
+
+                // Options are locked and unclickable in review mode
+                optionsContainer.innerHTML += `
+                    <div class="cbt-option-item" style="background: ${bg}; color: ${color}; border: ${border}; cursor: default; pointer-events: none !important;">
+                        <b>${optKey}.</b> ${q.options[optKey]} ${labelTag}
+                    </div>
+                `;
+            }
+        });
+    }
+
+    const expBox = document.getElementById('cbtReviewExplanationBox');
+    const expText = document.getElementById('cbtReviewExplanationText');
+    if (expBox) expBox.classList.remove('hidden');
+    if (expText) expText.innerText = q.explanation || "No explanation provided.";
+
+    // Hide Submit button and Clear Selection button during review mode
+    const submitBtn = document.getElementById('cbtSubmitExamBtn');
+    if (submitBtn) submitBtn.style.display = 'none';
+
+    const clearBtn = document.getElementById('btnClearSelection');
+    if (clearBtn) clearBtn.style.display = 'none';
+
+    renderQuestionPaletteForReview();
 }
